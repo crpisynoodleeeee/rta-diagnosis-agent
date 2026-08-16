@@ -1,0 +1,703 @@
+:::info
+[**<font style="background-color:#FBDE28;">https://developer.apple.com/documentation/adservices</font>**](https://developer.apple.com/documentation/adservices)**<font style="background-color:#FBDE28;">=苹果归因文档</font>**
+
+**<font style="background-color:#FBDE28;">0803更新</font>**
+
+**<font style="background-color:#FBDE28;">注意报表 ，日志维度更新，  App Store ID Bundle ID XAD 应用 ID  </font>**
+
+:::
+
+# 1. Apple Ads App 接入与整体归因链路
+## 1.1 功能定位
+Apple Ads App 接入用于建立客户 iOS App、XAD 事件中心、XAD Apple Ads 归因解析服务和 Apple AdServices Attribution API 之间的归因解析链路。
+
+Apple Ads App 不使用 XAD 投放链接、短链、中转页、监测链接或媒体 callback 完成归因，也不进入 XAD 传统归因策略和回传策略。
+
+本模块负责：
+
+1. 明确客户 App 获取 Apple attribution token 的接入方式。
+2. 明确客户系统向 XAD 事件中心上报 token 及应用上下文的方式。
+3. 明确 XAD 请求 Apple AdServices Attribution API 的处理链路。
+4. 明确 Apple 请求失败后的自动重试机制。
+5. 明确 Apple 返回结果的解析、标准化和事件中心入库方式。
+6. 为 Apple Ads 归因解析日志和 Apple Ads 归因报表提供数据来源。
+
+---
+
+## 1.2 整体归因链路
+Apple Ads App 的标准归因链路为：
+
+客户 App 获取 attribution token → 客户系统通过事件中心将 token 及上下文同步至 XAD → XAD 请求 Apple → XAD 自动重试和解析 → XAD 内部生成 Apple Ads 归因解析事件 → 归因解析日志与归因报表使用该事件。
+
+具体处理步骤如下：
+
+| 步骤 | 处理方 | 处理说明 |
+| --- | --- | --- |
+| 1 | 客户 iOS App | 接入 Apple AdServices Framework，在 App 首次打开或约定触发时机获取 attribution token |
+| 2 | 客户 App / 客户系统 | 将 attribution token、应用标识、事件时间及必要上下文上报至客户服务端 |
+| 3 | 客户系统 | 通过 Kafka 将 Apple Ads Token 事件同步至 XAD 事件中心 |
+| 4 | XAD 事件中心 | 接收 Token 事件并投递至 Apple Ads 归因解析服务 |
+| 5 | XAD 归因解析服务 | 校验 XAD 应用 ID、App Store ID、Bundle ID 等应用信息 |
+| 6 | XAD 归因解析服务 | 对 Token 事件执行幂等校验，避免同一 token 重复发起解析 |
+| 7 | XAD 归因解析服务 | 使用 attribution token 请求 Apple AdServices Attribution API |
+| 8 | XAD 归因解析服务 | 请求失败时，根据系统重试规则自动重试 |
+| 9 | Apple | 返回 Apple Ads attribution Payload-暂时不做 或无归因结果 |
+| 10 | XAD 归因解析服务 | 解析 Apple 返回结果，并标准化 Apple Ads 层级及归因字段 |
+| 11 | XAD 归因解析服务 | 在 XAD 内部生成 Apple Ads 归因解析事件并写入事件中心 |
+| 12 | XAD | 基于 Apple Ads 归因解析事件生成归因解析日志和归因报表 |
+
+
+---
+
+## 1.3 整体归因时序图<img src="https://cdn.nlark.com/yuque/0/2026/png/57981667/1784224375521-c738353d-6e0f-413a-aac0-a4ecf7b74d48.png" width="2934" title="" crop="0,0,1,1" id="u1fabf82b" class="ne-image">
+---
+
+## 1.4 事件中心接入方式
+Apple Ads App 归因链路通过 XAD 事件中心完成数据接入和结果沉淀。
+
+本期涉及两类事件：
+
+| 事件类型 | 生成方 | 说明 |
+| --- | --- | --- |
+| Apple Ads Token 事件 | 客户系统 | 携带 attribution token、应用标识、事件时间及必要上下文，用于触发 XAD 请求 Apple |
+| Apple Ads 归因解析事件 | XAD 系统 | 存储 XAD 请求 Apple 后生成的处理状态、归因结果及 Apple Ads 层级字段 |
+
+
+处理规则：
+
+1. 客户系统仅负责同步 Apple Ads Token 事件。
+2. Apple Ads 归因解析事件由 XAD 请求 Apple 并完成解析后内部生成。
+3. Apple Ads 归因解析事件不是客户系统直接同步的 Apple 返回结果。
+4. Apple Ads 归因解析日志以 Apple Ads 归因解析事件为数据来源。
+5. Apple Ads 归因报表基于 Apple Ads 归因解析事件进行聚合统计。
+6. 本期标准能力不依赖客户激活、注册、开户、交易、付费等业务事件。
+
+---
+
+## 1.5 客户侧接入要求
+客户 iOS App 需要接入 Apple AdServices Framework，并在约定时机获取 attribution token。
+
+客户系统需将 token 和必要上下文同步至 XAD 事件中心。
+
+建议上报信息如下：
+
+| 信息 | 是否必填 | 说明 |  |
+| --- | --- | --- | --- |
+| <font style="background-color:#FBDE28;">platform</font> | <font style="background-color:#FBDE28;">是</font> | <font style="background-color:#FBDE28;">建议输入渠道名称，此处适配多媒体接入的情况</font> |  |
+| attribution token | 是 | Apple AdServices Framework 返回的归因 token |  |
+| XAD 应用 ID / APP ID | 是 | 用于匹配 XAD 应用管理中的 Apple Ads App |  |
+| App Store ID | 是 | Apple App Store 应用标识 |  |
+| Bundle ID | 是 | iOS 应用 Bundle ID |  |
+| 事件时间 | 是 | token 获取时间或 App 打开时间 |  |
+| App 打开事件 ID | 建议 | 用于幂等和问题排查 |  |
+| User ID | 可选 | 客户业务侧用户标识 |  |
+| IDFV | 可选 | 客户侧排查辅助字段 |  |
+| App 版本 | 可选 | 客户 App 版本 |  |
+| iOS 版本 | 可选 | 客户设备系统版本 |  |
+
+
+产品规则：
+
+1. attribution token 仅用于 XAD 服务端请求 Apple 归因解析。
+2. attribution token 不作为 XAD 归因匹配字段使用。
+3. attribution token 不在前端页面明文展示。
+4. attribution token 不依赖 IDFA。
+5. 客户未上报 attribution token 时，不生成有效 Apple 请求任务。
+6. 客户业务事件不属于本期标准接入要求。
+
+---
+
+## 1.6 XAD 处理要求
+XAD 接收到 Apple Ads Token 事件后，需要完成以下处理：
+
+| 处理能力 | 说明 |
+| --- | --- |
+| 应用匹配 | 根据 XAD 应用 ID、App Store ID、Bundle ID 匹配应用管理中的 Apple Ads App |
+| 幂等校验 | 避免同一 token 或同一 App 打开事件重复请求 Apple |
+| Apple 请求 | 使用 attribution token 请求 Apple AdServices Attribution API |
+| 自动重试 | 对符合条件的临时异常执行系统自动重试 |
+| 结果解析 | 解析 Apple 返回的 attribution  |
+| 字段标准化 | 将 Apple Ads 层级和归因结果转换为 XAD 标准展示信息 |
+| 异常记录 | 记录应用不匹配、token 无效、Apple 请求失败、字段解析失败等异常 |
+| 事件生成 | 在 XAD 内部生成 Apple Ads 归因解析事件 |
+| 日志输出 | 将单次处理结果提供给 Apple Ads 归因解析日志 |
+| 报表输出 | 将解析结果提供给 Apple Ads 归因报表聚合 |
+
+
+---
+
+## 1.7 自动重试规则
+Apple Ads 归因解析支持系统自动重试，但不提供用户手动重试入口。
+
+| 场景 | 是否自动重试 | 说明 |
+| --- | --- | --- |
+| 请求 Apple 超时 | 是 | 按系统重试规则重新发起请求 |
+| 网络异常 | 是 | 按系统重试规则重新发起请求 |
+| Apple 服务临时异常 | 是 | 按系统重试规则重新发起请求 |
+| XAD 临时处理异常 | 是 | 满足可重试条件时重新执行 |
+| attribution token 缺失 | 否 | 参数不完整，直接记录失败 |
+| attribution token 无效 | 否 | Apple 明确返回 token 无效时，不继续重试 |
+| 应用信息未匹配 | 否 | 需先补充或修正应用配置 |
+| 事件格式异常 | 否 | 客户上报事件不符合接入要求 |
+| 幂等校验重复 | 否 | 不重复请求 Apple |
+
+
+补充规则：
+
+1. 自动重试次数及间隔由技术方案确定。
+2. 前端日志展示当前处理状态、自动重试次数和最终失败原因。
+3. 自动重试属于 Apple 归因解析任务处理，不属于传统媒体回传重试。
+4. 超过最大重试次数后，处理状态变更为“处理失败”。
+5. 自动重试次数及重试间隔需在技术评审阶段确认。
+
+---
+
+## 1.8 处理结果
+Apple Ads 归因解析需要区分“Apple 解析状态”和“归因状态
+
+### 1.8.1  Apple 解析状态
+| 状态 | 说明 |
+| --- | --- |
+| 待处理 | Token 事件已进入 XAD，尚未开始请求 Apple |
+| 处理中 | XAD 正在请求 Apple 或解析返回结果 |
+| 重试中 | 首次请求失败，系统正在自动重试 |
+| 处理成功 | 已正常完成 Apple 请求及结果解析 |
+| 处理失败 | 参数校验失败，或超过最大重试次数后仍未成功 |
+
+
+### 1.8.2 归因状态
+| #### 归因状态 | 说明 |
+| --- | --- |
+| 归因成功 | Apple 返回 attribution = true |
+| 无归因结果 | Apple 正常返回，但 attribution = false 或未返回有效 Apple Ads 归因 |
+| 未知 | 请求或解析流程未成功完成，无法判断归因结果 |
+
+
+规则：
+
+1. 处理成功不等于归因成功。
+2. 无归因结果不属于系统异常。
+3. 处理失败时，归因结果展示为“未知”。
+4. 归因解析日志和归因报表需分别使用处理状态与归因结果，不得混为同一状态。
+
+---
+
+## 1.9 数据使用范围
+Apple Ads 归因解析事件仅用于：
+
+1. Apple Ads 归因解析日志展示。
+2. Apple Ads Campaign、Ad Group、Keyword 等层级归因分析。
+3. Apple Ads Download / Redownload 分析。
+4. Apple Ads 产品页 / CPP 相关分析。
+5. Apple Ads 归因结果汇总和趋势分析。
+
+本期不用于：
+
+1. XAD 传统归因策略条件匹配。
+2. XAD 回传策略执行。
+3. 传统媒体 callback 回传。
+4. 激活、注册、开户、交易、付费、留存等业务事件关联分析。
+5. 业务事件去重和关联窗口计算。
+6. 项目侧定制转化指标计算。
+
+业务转化类能力可作为项目侧定制口径使用，由具体项目单独评估事件接入、关联关系和统计规则，不纳入本期标准能力。
+
+---
+
+## 1.10 与后续模块的关系
+| 后续模块 | 使用内容 |
+| --- | --- |
+| Apple Ads 归因解析日志 | 展示单次 Apple Ads 归因解析任务、自动重试过程、处理状态、归因结果和失败原因 |
+| Apple Ads 归因报表 | 聚合 Apple Ads 归因解析事件，展示解析任务、处理结果、归因结果及 Apple Ads 层级分析 |
+| XAD 传统归因策略 | 不使用 Apple Ads 归因解析事件 |
+| XAD 回传策略 | 不使用 Apple Ads 归因解析事件 |
+| 事件中心 | 承接 Apple Ads Token 事件，并存储 XAD 生成的 Apple Ads 归因解析事件 |
+
+
+
+
+---
+
+## 2. Apple Ads 归因解析日志-评估工作量
+**产品原型：**
+
+[**https://wolf-happy-78370692.aisite.pixso.design**](https://wolf-happy-78370692.aisite.pixso.design)
+
+### 2.1 产品入口
+入口路径：
+
+投放管理 → 归因配置 → 归因 / 回传日志 → Apple Ads 归因解析日志
+
+页面类型：
+
+独立列表页
+
+---
+
+### 2.2 日志来源
+Apple Ads 归因解析日志来源于事件中心中的「Apple Ads 归因解析事件」
+
+**事件生成方式：**客户系统同步
+
+**事件来源类型：**Apple Ads 归因解析事件
+
+
+
+
+
+全局提示：**说明：**Apple Ads 归因解析日志为 Apple Ads App 专属日志
+
+---
+
+### 2.3 日志筛选区
+日志筛选区用于支持用户按应用、Apple Ads 层级、解析状态、归因结果和时间快速定位 Apple Ads 归因解析记录
+
+筛选项包含搜索框、下拉筛选和时间筛选三类控件
+
+搜索框支持模糊搜索；若使用名称 + ID 下拉选择器，则支持按名称或 ID 检索后选择
+
+下拉筛选项支持多选和快捷全选
+
+时间筛选支持按开始时间和结束时间查询，不允许选择未来时间
+
+| 筛选项 | 控件类型 | 说明 |  |
+| --- | --- | --- | --- |
+| <font style="background-color:#FBDE28;">XAD 应用 ID</font> | <font style="background-color:#FBDE28;">搜索框</font> | <font style="background-color:#FBDE28;">支持模糊搜索</font> | <img src="https://cdn.nlark.com/yuque/0/2026/png/57981667/1782188321815-7a3ffbea-d8d1-4c00-a0f8-7129c1860036.png" width="2835.5556306721273" title="" crop="0,0,1,1" id="hlKsc" class="ne-image"> |
+| <font style="background-color:#FBDE28;">App Store ID</font> | <font style="background-color:#FBDE28;">搜索框</font> | <font style="background-color:#FBDE28;">支持模糊搜索</font> | |
+| <font style="background-color:#FBDE28;">Bundle ID</font> | <font style="background-color:#FBDE28;">搜索框</font> | <font style="background-color:#FBDE28;">支持模糊搜索</font> | |
+| User ID | 搜索框 | 客户未同步时无可筛选数据 | |
+| 用户唯一标识 | 搜索框 | 支持 IDFV、设备标识 hash 等 | |
+| Apple Org ID | 搜索框 | 按 Apple Ads 组织 / 账户 ID 搜索 | |
+| Campaign 名称 / ID | 名称 + ID 下拉 | 支持名称或 ID 搜索 | |
+| Ad Group 名称 / ID | 名称 + ID 下拉 | 支持名称或 ID 搜索 | |
+| 处理状态 | 下拉多选 | 待处理、处理中、重试中、处理成功、处理失败 | |
+| 归因结果 | 下拉多选 | 归因成功、无归因结果、未知 | |
+| 请求 Apple 时间 | 时间范围 | 默认当天，不允许选择未来时间 | |
+| Apple 点击时间 | 时间范围 | 可能为空 | |
+| Apple 曝光时间 | 时间范围 | 可能为空 | |
+
+
+默认规则：
+
+1. 默认时间范围为当天。
+2. 其他筛选项默认为全部。
+3. 点击“查询”后刷新列表。
+4. 点击“重置”后恢复默认值。
+5. 下拉多选支持全选和清空。
+6. 不展示 Search Term 筛选项。
+
+---
+
+### 2.4 日志列表字段
+日志列表用于展示 Apple Ads 归因解析结果
+
+#### 一、基础标识-部分来自上报，需客户提供
+| 字段 | 说明 |  |
+| --- | --- | --- |
+| 解析流水号 | XAD 生成的解析任务唯一标识，支持复制 | <img src="https://cdn.nlark.com/yuque/0/2026/png/57981667/1782188362450-5e1de28d-3eab-4a1d-a544-a9b6c6efc93e.png" width="2835.5556306721273" title="" crop="0,0,1,1" id="uc8ed8063" class="ne-image"> |
+| XAD 应用 ID | 支持复制 | |
+| APP ID-依赖应用管理 | 客户侧应用 ID | |
+| App Store ID | Apple App Store 应用 ID | |
+| Bundle ID | iOS Bundle ID | |
+| User ID | 客户未同步时展示“-” | |
+| 用户唯一标识 | 客户未同步时展示“-” | |
+| 请求 Apple 时间 | XAD 请求 Apple 的时间 | |
+| 解析完成时间 | 任务完成时间 | |
+| 事件入库时间 | 归因解析事件进入事件中心的时间 | |
+| 字段 | 说明 | |
+
+
+#### 二、归因核心
+| 字段 | 说明 |  |
+| --- | --- | --- |
+|  Apple 解析状态 | 待处理、处理中、重试中、处理成功、处理失败 | <img src="https://cdn.nlark.com/yuque/0/2026/png/57981667/1782188364211-91196207-c9f6-4bac-b3a6-31a8d495ecdc.png" width="2835.5556306721273" title="" crop="0,0,1,1" id="ua0427d48" class="ne-image"> |
+| #### 归因状态 | 归因成功、无归因结果、未知 | |
+| **失败说明** | 展示无归因或失败原因 | |
+| Apple 响应状态 | 具体失败原因展示-待确认 | |
+| Apple 点击时间 | click_date，可能为空 | |
+| Apple 曝光时间 | impression_date，可能为空 | |
+
+
+#### 三、Apple Ads 层级
+#### [https://developer.apple.com/documentation/adservices/aaattribution/attributiontoken()](https://developer.apple.com/documentation/adservices/aaattribution/attributiontoken())
+| 字段 | 映射 | 说明 |  |
+| --- | --- | --- | --- |
+| Apple Org ID | `orgId` | Apple Ads 组织 / 账户 ID | <img src="https://cdn.nlark.com/yuque/0/2026/png/57981667/1782188365719-1f3c66c4-7ab9-41c8-87bc-22e8d585d550.png" width="2835.5556306721273" title="" crop="0,0,1,1" id="ub0dfdcf9" class="ne-image"> |
+| Campaign 名称 / ID | `campaignId`<br/>（仅 ID，无名称字段） | 名称通过媒体数据映射，ID 为 Apple 返回或同步数据 | |
+| Ad Group 名称 / ID | `adGroupId`<br/>（仅 ID，无名称字段） | 名称通过媒体数据映射 | |
+| Keyword ID / 关键词 | `keywordId`<br/>（仅 ID，无关键词文本；开启 search match 时不返回） | Keyword ID 由 Apple 返回；关键词文本通过媒体数据映射 | |
+| Ad ID / Creative ID | `adId` | Apple 广告相关 ID | |
+| 转化类型 | `conversionType` | Download / Redownload / PreOrder | |
+| 归因声明类型 | `claimType` | Click / Impression | |
+| 广告展示位置 | `supplyPlacement` | supplyPlacement | |
+| 国家 / 地区 | `countryOrRegion` | countryOrRegion | |
+| Apple 点击时间 | `clickDate` | clickDate，可能为空 | |
+| Apple 曝光时间 | `impressionDate` | impressionDate，可能为空 | |
+
+
+Apple 官方归因 直接提供的主要字段为 ID、归因结果、归因声明类型、转化类型、国家 / 地区、点击或曝光时间等；Campaign 名称、Ad Group 名称、Keyword 文本和 Product Page 信息需结合媒体数据进行映射
+
+#### 四、行操作
+| 行操作 | 说明 |
+| --- | --- |
+| 复制流水号 | 复制解析流水号 |
+
+
+不提供：
+
++ 人工重试
++ 回传重试
++ 编辑
++ 删除
++ 重新归因
+
+---
+
+###  状态说明
+
+
+### 1.8.1 Apple 解析状态
+Apple 解析状态用于描述客户服务端或 XAD 接入服务请求 Apple 归因解析的处理结果。
+
+| 状态 | 说明 |  |
+| --- | --- | --- |
+| 待处理 | Token 事件已进入 XAD，尚未开始请求 Apple | <img src="https://cdn.nlark.com/yuque/0/2026/png/57981667/1782188398488-3ecf2cda-45af-480c-a456-7d822bcb140b.png" width="357.7777872556524" title="" crop="0,0,1,1" id="hCzmP" class="ne-image"> |
+| 处理中 | XAD 正在请求 Apple 或解析返回结果 | |
+| 重试中 | 首次请求失败，系统正在自动重试 | |
+| 处理成功 | 已正常完成 Apple 请求及结果解析 | |
+| 处理失败 | 参数校验失败，或超过最大重试次数后仍未成功 | |
+
+
+### 1.8.2 归因状态
+| 归因状态 | 说明 |  |
+| --- | --- | --- |
+| 归因成功 | Apple 返回 attribution = true | <img src="https://cdn.nlark.com/yuque/0/2026/png/57981667/1782188398488-3ecf2cda-45af-480c-a456-7d822bcb140b.png" width="357.7777872556524" title="" crop="0,0,1,1" id="nH1EK" class="ne-image"> |
+| 无归因结果 | Apple 正常返回，但 attribution = false 或未返回有效 Apple Ads 归因 | |
+| 未知 | 请求或解析流程未成功完成，无法判断归因结果 | |
+
+
+规则：
+
+1. 处理成功不等于归因成功。
+2. 无归因结果不属于系统异常。
+3. 处理失败时，归因结果展示为“未知”。
+4. 归因解析日志和归因报表需分别使用处理状态与归因结果，不得混为同一状态。
+
+
+
+#### 失败说明包括：
+1. attribution token 缺失。
+2. attribution token 失效。
+3. 请求 Apple 接口失败。
+4. Apple 返回异常。
+5. Apple 返回字段缺失。
+6. ~~App Store ID / Bundle ID 未匹配到 XAD 应用~~
+7. <font style="background-color:#FBDE28;">系统处理异常（Kafka 消息格式异常，字段标准化失败，幂等校验失败）</font>
+
+
+
+---
+
+## 3. Apple Ads 归因报表
+**产品原型：**[https://wolf-happy-78370692.aisite.pixso.design](https://wolf-happy-78370692.aisite.pixso.design)
+
+### 3.1 产品入口
+入口路径：
+
+数据中心 → Apple Ads应用归因报表
+
+页面类型：
+
+独立报表页
+
+### 3.2 功能定位
+Apple Ads 归因报表用于基于 Apple Ads 归因解析事件和 Apple Ads App 业务事件，展示 Apple Ads 在不同广告层级、关键词、产品页 / CPP、国家 / 地区和业务转化维度下的效果表现。
+
+
+
+| 数据来源 | 用途 |
+| --- | --- |
+| Apple Ads 归因解析事件 | 解析、归因、转化类型及 Apple Ads ID |
+| Apple Ads 媒体层级数据 | Campaign、Ad Group、Keyword 等名称映射 |
+| 应用管理 | XAD 应用 ID、APP ID、App Store ID、Bundle ID |
+
+
+---
+
+### 3.3 报表筛选区
+| 筛选项 | 控件类型 | 说明 |  |
+| --- | --- | --- | --- |
+| 时间范围 | 时间选择器 | 默认当天，支持按天查询，不允许选择未来时间<br/><br/> 报表日期默认按 Token 事件进入 XAD 的日期统计；自动重试后成功的任务仍归属原 Token 事件日期。 | <img src="https://cdn.nlark.com/yuque/0/2026/png/57981667/1782188128597-42369bd9-bd2e-4927-8b43-30a2618f10ff.png" width="2835.5556306721273" title="" crop="0,0,1,1" id="ud5b2edc6" class="ne-image"> |
+| <font style="background-color:#FBDE28;">App Store ID</font> | <font style="background-color:#FBDE28;">搜索框</font> | <font style="background-color:#FBDE28;">支持按 App Store ID 搜索</font> | |
+| <font style="background-color:#FBDE28;">Bundle ID</font> | <font style="background-color:#FBDE28;">搜索框</font> | <font style="background-color:#FBDE28;">支持按 Bundle ID 搜索</font> | |
+| <font style="background-color:#FBDE28;">XAD 应用 ID</font><br/><font style="background-color:#FBDE28;">依赖应用管理</font> | <font style="background-color:#FBDE28;">搜索框</font> | <font style="background-color:#FBDE28;">支持按应用 ID 搜索</font> | |
+| Apple Org ID | 搜索框 | 支持按 Apple Org ID 搜索 | |
+| Campaign 名称 / ID | 搜索框 / 下拉选择 | 支持按 Campaign 名称或 ID 检索 | |
+| Ad Group 名称 / ID | 搜索框 / 下拉选择 | 支持按 Ad Group 名称或 ID 检索 | |
+| Keyword ID / 关键词 | 搜索框 | 支持关键词维度查询 | |
+| 产品页 ID / CPP ID | 搜索框 | 支持产品页维度查询 | |
+| Apple 转化类型 | 下拉多选 | Download、Redownload | |
+| 国家 / 地区 | 下拉多选 | 支持 country_or_region | |
+|  Apple 解析状态 | 下拉多选 |  待处理、处理中、重试中、处理成功、处理失败   | |
+| 归因状态 | 下拉多选 |  归因成功、无归因结果、未知   | |
+| 操作 |  |  | |
+| 查询，重置 |  |  | |
+| 导出 | 按钮 | 点击后按照当前筛选项，导出报表 | |
+
+
+规则：
+
+1. 筛选项变更后，点击「查询」刷新报表。
+2. 点击「重置」恢复默认筛选条件。
+3. 时间范围不允许选择未来时间。
+4. ID + 名称类筛选支持模糊搜索。
+5. 支持按当前筛选条件导出报表。
+
+
+
+---
+
+### 3.4 报表维度
+| 维度 | 说明 |  |
+| --- | --- | --- |
+| 日期 | 按天统计 | <img src="https://cdn.nlark.com/yuque/0/2026/png/57981667/1782188145313-bbf5fb2d-d27a-417a-8dbe-0b7132ec6b20.png" width="2835.5556306721273" title="" crop="0,0,1,1" id="ufb655b02" class="ne-image"><br/>**页面交互参考**<br/><img src="https://cdn.nlark.com/yuque/0/2026/png/57981667/1784114697669-289352ab-9cec-470c-9f0f-49a268eb37a8.png" width="1366" title="" crop="0,0,1,1" id="ub2853012" class="ne-image"> |
+| AppID<br/>APP ID-依赖应用管理 | （依赖应用管理） | |
+| <font style="background-color:#FBDE28;">App Store ID</font> | <font style="background-color:#FBDE28;">（依赖应用管理）</font> | |
+| <font style="background-color:#FBDE28;">Bundle ID</font> | <font style="background-color:#FBDE28;">（依赖应用管理）</font> | |
+| <font style="background-color:#FBDE28;">XAD 应用 ID</font><br/><font style="background-color:#FBDE28;">依赖应用管理</font> | <font style="background-color:#FBDE28;">（依赖应用管理）</font> | |
+| Campaign | 按 Apple Ads Campaign 统计 | |
+| Ad Group | 按 Apple Ads Ad Group 统计 | |
+| Keyword-可能不返回 | 按 Keyword ID / keyword_text 统计 | |
+| Creative | 按 ad_id / creative_id 统计 | |
+| 国家 / 地区 | 按 country_or_region 统计 | |
+| 转化类型 | Download / Redownload | |
+
+
+---
+
+
+
+### 3.5 大盘情况
+大盘情况展示在筛选区下方，用于快速查看当前筛选条件下 Apple Ads 归因整体表现。
+
+指标卡能力对齐数据中心其他报表核心数据能力，支持：
+
+1. hover 说明。
+2. 环比展示。
+3. 指标自定义。
+4. 指标模板保存。
+5. 按当前筛选条件刷新。
+
+默认指标
+
+| 默认指标 | 口径 |
+| --- | --- |
+| 解析任务数 | 按解析流水号去重 |
+| 处理成功数 | 处理状态为处理成功 |
+| 归因成功数 | 归因结果为归因成功 |
+| 处理成功率 | 处理成功数 / 解析任务数 |
+| 归因命中率 | 归因成功数 / 处理成功数 |
+
+
+大盘展示规则：
+
+1. 指标卡展示在筛选区下方。
+2. 指标卡数据跟随当前筛选条件刷新。
+3. 用户可自定义展示指标，并保存为个人大盘指标模板。
+4. 无数据、分母为 0 或指标未同步完成时，展示 “--”。
+5. 比率类指标分母为 0 时，展示 “--”。
+6. 环比数据跟随当前时间范围计算，计算口径复用数据中心通用环比规则。
+7. 若当前时间范围不支持环比或对比周期无数据，环比展示 “--”
+
+
+
+#### 图表 自定义图表-此处指标跟随用户的大盘情况指标展示，无需用户选择选择
+功能定位：
+
+用于支持用户基于 Apple Ads 归因报表指标池，自定义选择图表指标和展示方式。
+
+| 项目 | 规则 |
+| --- | --- |
+| 图表类型 | 多指标折线图，支持双轴 |
+| X 轴 | 日期，默认按天展示，支持按报表通用时间粒度切换 |
+| 系列维度 | 指标维度，不按关键词拆分 |
+| **<font style="background-color:#FBDE28;">左 Y 轴</font>** | **<font style="background-color:#FBDE28;">跟随用户的大盘情况指标展示</font>** |
+| **<font style="background-color:#FBDE28;">右 Y 轴</font>** | **<font style="background-color:#FBDE28;">跟随用户的大盘情况指标展示</font>** |
+| 指标来源 | Apple Ads 归因报表指标池 |
+| 展示口径 | 展示当前筛选条件下的 Apple Ads 整体趋势 |
+| hover 内容 | 展示日期及当前已选指标值 |
+| 空状态 | 无数据时展示空状态 |
+| 联动规则 | 跟随当前筛选条件、时间粒度和指标模板刷新 |
+
+
+#### 3.5.2 指标选择器
+Apple Ads 归因报表需支持指标选择器，并支持指标模板自定义设置。
+
+规则：
+
+1. 指标选择器能力与当前系统内其他报表模块保持一致。
+2. 用户可选择大盘指标、图表指标和列表指标。
+3. 用户可保存个人指标模板。
+4. 指标模板变更后，大盘、图表和列表按当前模板刷新。
+5. 不同用户的指标模板互不影响。
+
+
+
+<img src="https://cdn.nlark.com/yuque/0/2026/png/57981667/1782183613269-3ec7739b-7c66-4d41-927d-ffd7fe6d6c6a.png" width="969.319580078125" title="" crop="0,0,1,1" id="jcwEa" class="ne-image">
+
+---
+
+
+
+### 3.6 图表区域-仅默认图表
+#### 图表 1：Apple Ads 归因效果时间趋势折线图
+功能定位：
+
+用于监控 Apple Ads 渠道归因效果随时间变化的情况。
+
+| 项目 | 规则 |
+| --- | --- |
+| 图表类型 | 多指标折线图，支持双轴 |
+| X 轴 | 日期，默认按天展示，支持按报表通用时间粒度切换 |
+| 系列维度 | 指标维度，不按关键词拆分 |
+| 左 Y 轴 | 解析请求量、归因成功量 |
+| 右 Y 轴 |  归因命中率”   |
+| 指标来源 | Apple Ads 归因报表指标池 |
+| 展示口径 | 展示当前筛选条件下的 Apple Ads 整体趋势 |
+| hover 内容 | 展示日期、解析请求量、归因成功量、归因成功率、激活量 |
+| 空状态 | 无数据时展示空状态 |
+| 联动规则 | 跟随当前筛选条件、时间粒度和指标模板刷新 |
+
+
+图表规则：
+
+1. 图表不展示关键词维度多系列折线。
+2. 图表不按 Keyword ID / 关键词拆分曲线。
+3. 用户筛选单个关键词时，图表展示该关键词筛选后的整体归因趋势。
+4. 用户未筛选关键词时，图表展示当前全部筛选条件下的 Apple Ads 整体归因趋势。
+5. 数值类指标展示在左 Y 轴。
+6. 比率类指标展示在右 Y 轴。
+7. 比率类指标分母为 0 时，图表 hover 中展示 “--”。
+
+
+
+
+
+###  3.7 指标口径  
+**处理类指标**
+
+| 指标 | 计算口径 |  |
+| --- | --- | --- |
+| 解析任务数 | 按解析流水号去重后的任务总数 | <img src="https://cdn.nlark.com/yuque/0/2026/png/57981667/1782188220645-2b5ac567-0370-46f3-8112-2fdde161fce6.png" width="2626.6667362495723" title="" crop="0,0,1,1" id="Yaysk" class="ne-image"> |
+| 待处理数 | 处理状态 = 待处理 的任务数 | |
+| 处理中数 | 处理状态 = 处理中 的任务数 | |
+| 重试中数 | 处理状态 = 重试中 的任务数 | |
+| 处理成功数 | 处理状态 = 处理成功 的任务数 | |
+| 处理失败数 | 处理状态 = 处理失败 的任务数 | |
+| 处理成功率 | 处理成功数 / 解析任务数 | |
+| 自动重试任务数 | 自动重试次数大于 0 的去重任务数 | |
+| 自动重试成功数 | 发生自动重试且最终处理成功的任务数 | |
+| 自动重试成功率 | 自动重试成功数 / 自动重试任务数 | |
+
+
+**归因类指标**
+
+| 指标 | 计算口径 |  |
+| --- | --- | --- |
+| 归因成功数 | 归因结果 = 归因成功 的任务数 | <img src="https://cdn.nlark.com/yuque/0/2026/png/57981667/1782188220645-2b5ac567-0370-46f3-8112-2fdde161fce6.png" width="2626.6667362495723" title="" crop="0,0,1,1" id="uY7L0" class="ne-image"> |
+| 无归因结果数 | 归因结果 = 无归因结果 的任务数 | |
+| 未知结果数 | 归因结果 = 未知 的任务数 | |
+| 归因命中率 | 归因成功数 / 处理成功数 | |
+
+
+说明：
+
++ 归因命中率使用“处理成功数”作为分母，避免将技术处理失败混入归因命中表现。
++ 处理成功数应等于归因成功数与无归因结果数之和；存在数据延迟时允许短暂不一致。
+
+**转化类型指标**
+
+| 指标 | 计算口径 |  |
+| --- | --- | --- |
+| Download 数 | conversionType = Download 的任务数 | <img src="https://cdn.nlark.com/yuque/0/2026/png/57981667/1782188220645-2b5ac567-0370-46f3-8112-2fdde161fce6.png" width="2626.6667362495723" title="" crop="0,0,1,1" id="D24tb" class="ne-image"> |
+| Redownload 数 | conversionType = Redownload 的任务数 | |
+| PreOrder 数 | conversionType = PreOrder 的任务数 | |
+| Click 归因数 | claimType = Click 的任务数 | |
+| Impression 归因数 | claimType = Impression 的任务数 | |
+
+
+Apple 官方说明 Attribution API 会返回 standard 或 detailed 两类响应；可用字段会根据设备及隐私状态产生差
+
+
+
+### 3.8 报表设计 列表字段+指标
+列表字段 维度+指标
+
+| 字段 | 说明 |  |  |
+| --- | --- | --- | --- |
+| 维度 | | <img src="https://cdn.nlark.com/yuque/0/2026/png/57981667/1782188223687-fffa5f38-4f5c-43c6-abcb-ad02b674922f.png" width="2626.6667362495723" title="" crop="0,0,1,1" id="Ue3Si" class="ne-image"><br/><br/>参考交互<br/><img src="https://cdn.nlark.com/yuque/0/2026/png/57981667/1782188265959-9cbe4b6e-d258-4557-ac80-b9d1b9853505.png" width="2738" title="" crop="0,0,1,1" id="d5h1f" class="ne-image"><br/><br/><img src="https://cdn.nlark.com/yuque/0/2026/png/57981667/1782188270938-cc95ca81-7416-445f-93dd-f184abf763c9.png" width="1366" title="" crop="0,0,1,1" id="k5Okv" class="ne-image"> |
+| 日期 | 统计日期 |
+| XAD 应用 ID / APP ID | 应用维度 |
+| App Store ID | Apple 应用 ID |
+| Bundle ID | iOS Bundle ID |
+| Apple Org ID | Apple Ads 组织 / 账户 |
+| Campaign 名称 / ID | Campaign 维度 |
+| Ad Group 名称 / ID | Ad Group 维度 |
+| Keyword ID / 关键词-可能不返回 | Keyword 维度 |
+| Ad ID / Creative ID | Ad 维度 |
+| 国家 / 地区 | countryOrRegion |
+| 转化类型 | Download / Redownload / PreOrder |
+| 归因声明类型 | Click / Impression |
+| 广告展示位置 | supplyPlacement |
+| 指标 | |
+| 解析任务数 | 去重任务数 |
+| 处理成功数 | 成功处理任务数 |
+| 处理失败数 | 最终失败任务数 |
+| 自动重试任务数 | 发生自动重试的任务数 |
+| 归因成功数 | attribution = true |
+| 无归因结果数 | attribution = false |
+| 处理成功率 | 处理成功数 / 解析任务数 |
+| 归因命中率 | 归因成功数 / 处理成功数 |
+| Download 数 | Download 任务数 |
+| Redownload 数 | Redownload 任务数 |
+| PreOrder 数 | PreOrder 任务数 |
+
+
+展示规则：
+
+1. 名称 + ID 字段上下两行展示。
+2. ID 支持复制。
+3. 数值无数据时展示“-”。
+4. 比率分母为 0 时展示“--”。
+5. 表格支持横向滚动。
+6. 映射字段缺失不影响统计指标。
+
+
+
+展示规则：
+
+1. ID 类字段支持复制。
+2. 名称 + ID 字段上下两行展示。
+3. 数值为空时展示“-”。
+4. 比率类指标分母为 0 时展示“-”。
+5. 表格字段较多时支持横向滚动。
+6. 支持导出 CSV，导出字段与当前列表字段保持一致。
+
+---
+
+### 空状态与异常展示
+| 场景 | 展示规则 |
+| --- | --- |
+| 当前筛选条件无数据 | 指标卡展示 “--”，图表展示空状态，列表展示空表格 |
+| 指标分母为 0 | 比率类指标展示 “--” |
+| 数据同步中 | 指标卡展示 “--”，hover 提示“数据同步中” |
+| Apple Ads 层级字段缺失 | 对应字段展示 “-” |
+| 解析失败 | 计入解析失败数，列表中按解析状态展示 |
+| 无归因结果 | 计入无归因结果数，不计入系统异常 |
+
+
+---
+
+
+
+

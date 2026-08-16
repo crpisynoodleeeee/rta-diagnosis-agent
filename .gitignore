@@ -1,0 +1,21 @@
+# === 工具运行目录 ===
+.workbuddy/
+
+# === Node / Vite（demo/）===
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# === R 分析 ===
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+.Renviron
+
+# === 系统文件 ===
+Thumbs.db
+Desktop.ini
+.DS_Store

@@ -1,0 +1,970 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1440" />
+  <title>RTA 投放诊断 Agent · Demo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com?plugins=forms,typography"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'IBM Plex Mono', 'SF Mono', 'Menlo', 'monospace']
+          },
+          colors: {
+            ink: {
+              50: '#f8fafb', 100: '#eef2f4', 200: '#dce3e7', 300: '#b9c3ca',
+              400: '#8a96a0', 500: '#5e6973', 600: '#3f4a54', 700: '#2a333c',
+              800: '#1c232a', 900: '#10161c'
+            },
+            teal: {
+              50: '#effaf7', 100: '#d6f1ea', 200: '#a8e0d3', 300: '#74c9b8',
+              400: '#3eaf9a', 500: '#1f8a78', 600: '#166b5e', 700: '#125448',
+              800: '#0f4138', 900: '#0c342d'
+            }
+          },
+          borderRadius: { DEFAULT: '6px', sm: '4px', md: '6px', lg: '8px', xl: '10px' },
+          boxShadow: {
+            panel: '0 1px 2px 0 rgba(16,22,28,.04), 0 1px 1px 0 rgba(16,22,28,.03)',
+            'panel-lg': '0 4px 12px -2px rgba(16,22,28,.08), 0 2px 4px -2px rgba(16,22,28,.04)',
+            drawer: '-8px 0 24px -8px rgba(16,22,28,.12)'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { background:#f6f8fa; color:#1c232a; font-feature-settings:'cv11','ss01'; -webkit-font-smoothing:antialiased; }
+    .num { font-family:'JetBrains Mono','IBM Plex Mono','SF Mono',Menlo,monospace; font-variant-numeric:tabular-nums; font-feature-settings:'tnum'; }
+    ::-webkit-scrollbar { width:8px; height:8px; }
+    ::-webkit-scrollbar-thumb { background:rgba(139,150,162,.35); border-radius:4px; }
+    ::-webkit-scrollbar-thumb:hover { background:rgba(139,150,162,.6); }
+    [v-cloak] { display:none; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    .spin { animation: spin 1s linear infinite; }
+    /* Spring 物理参数：smooth decel（skill motion-recipes 推荐） */
+    @keyframes slidein { from { transform:translateX(40px); opacity:0; } to { transform:translateX(0); opacity:1; } }
+    .slidein { animation: slidein .32s cubic-bezier(0.16, 1, 0.3, 1); }
+    @keyframes fadein { from { opacity:0; } to { opacity:1; } }
+    .fadein { animation: fadein .2s ease; }
+    /* 按钮触觉反馈：active 时轻微缩放（skill Quality Gates 推荐） */
+    .btn-tactile { transition: transform .12s ease, background-color .15s ease, border-color .15s ease; }
+    .btn-tactile:active:not(:disabled) { transform: scale(0.98); }
+    /* 全局按钮触觉反馈兜底 */
+    button:not(:disabled):active { transform: scale(0.98); }
+    button { transition: transform .12s ease, background-color .15s ease, border-color .15s ease, color .15s ease; }
+    /* 无障碍：尊重 prefers-reduced-motion（skill 2.6 强制规则） */
+    @media (prefers-reduced-motion: reduce) {
+      .spin, .slidein, .fadein { animation: none !important; }
+      .btn-tactile { transition: none !important; }
+      * { scroll-behavior: auto !important; }
+    }
+  </style>
+</head>
+<body class="font-sans">
+<div id="app" v-cloak></div>
+
+<script type="importmap">
+{ "imports": { "vue": "https://unpkg.com/vue@3.4.38/dist/vue.esm-browser.js" } }
+</script>
+
+<script type="module">
+import { createApp, ref, computed, reactive } from 'vue'
+
+// ──────────────────────────────────────────────────────────────
+// Mock 数据（全部脱敏，媒体侧字段标注【待核验】）
+// ──────────────────────────────────────────────────────────────
+const account = {
+  accountId: 'M-2001',
+  mediaSideAccountId: '__ADVERTISER_ID__【待核验】',
+  name: '夏日电商品牌主账户',
+  owner: '北京 XX 电商代理'
+}
+
+const deliveryList = [
+  {
+    project: {
+      projectId: 'P-2026-SUMMER',
+      mediaSideProjectId: '__PROJECT_ID__【待核验】',
+      name: '夏季大促项目',
+      accountId: 'M-2001',
+      dailyBudget: 1000, actualCost: 300, achievementRate: 0.3,
+      abnormal: true, diagnoseDate: '2026-08-14',
+      unitCount: 2, creativeCount: 2,
+      unitSummary: '对照组 U-C-001（旧策略）· 实验组 U-T-001（新策略）'
+    },
+    account
+  },
+  {
+    project: {
+      projectId: 'P-2026-AUTUMN',
+      mediaSideProjectId: '__PROJECT_ID__【待核验】',
+      name: '秋季预售种草项目',
+      accountId: 'M-2002',
+      dailyBudget: 800, actualCost: 760, achievementRate: 0.95,
+      abnormal: false, diagnoseDate: '2026-08-14',
+      unitCount: 2, creativeCount: 4,
+      unitSummary: '常规投放单元 2 个'
+    },
+    account: { accountId:'M-2002', mediaSideAccountId:'__ADVERTISER_ID__【待核验】', name:'秋季预售主账户', owner:'上海 XX 数字代理' }
+  },
+  {
+    project: {
+      projectId: 'P-2026-MEMBER',
+      mediaSideProjectId: '__PROJECT_ID__【待核验】',
+      name: '会员活跃维系项目',
+      accountId: 'M-2003',
+      dailyBudget: 500, actualCost: 165, achievementRate: 0.33,
+      abnormal: true, diagnoseDate: '2026-08-14',
+      unitCount: 1, creativeCount: 2,
+      unitSummary: '单投放单元'
+    },
+    account: { accountId:'M-2003', mediaSideAccountId:'__ADVERTISER_ID__【待核验】', name:'会员 CRM 主账户', owner:'深圳 XX 直营' }
+  }
+]
+
+const glossary = {
+  '参竞率': '平台同意参与竞价的请求占比',
+  'RTA超时': '媒体没有在规定时间内收到本次决策结果',
+  '分桶': '按固定规则把流量分配到不同实验组',
+  '准入门槛': '只有模型打分高于此阈值的请求才允许参与竞价',
+  'RTAID': '媒体侧给广告主的 RTA 资源标识，对应一组策略和实验',
+  '兜底': '请求异常时执行的默认策略，防止流量完全丢失',
+  '命中率': '请求用户中被广告主策略命中的比例',
+  '放行率': '命中用户中最终被允许参与竞价的比例',
+  '实验组': '应用新策略或新出价规则的流量组，用于验证策略效果',
+  '对照组': '实验中的基线组，用于和实验组对比效果'
+}
+
+const goldenReport = {
+  oneLiner: '实验组把准入门槛从 40% 调到 80%，导致参竞率从 60% 跌到 10%，实验组消耗骤降，对照组无法补量，项目日预算只跑到 30%。',
+  managerSummary: '夏季大促项目今天日预算 1000 元，目前只消耗 300 元（达成率 30%）。Agent 排查后发现：实验组在 11:50 把准入门槛从 40% 调高到 80%，12:00 生效后，实验组的参竞率从 60% 直接掉到 10%，实验单元只花了 50 元，对照单元只花了 250 元。请求量、RTA 接口和创意状态都正常，问题不在渠道流量，而在实验策略本身。建议：把实验组门槛先恢复到 60%，只在小部分流量上验证，盯住参竞率、曝光、消耗和 CPA 四个指标。',
+  impact: { budget:1000, cost:300, gap:700, achievementRate:0.3, affectedScope:'实验组 A · 5 / 10 个分桶（约 50% 项目流量）' },
+  causes: {
+    primary: '实验组 A 准入门槛从 40% 上调到 80%，导致模型打分难以命中，参竞率骤降',
+    secondary: '对照组维持旧策略但未跟进门槛调整，无法弥补实验组的流量损失',
+    excluded: [
+      'RTAID 不可用 / 媒体账户未绑定',
+      'QPS 上限 / 接口超时',
+      '请求量不足',
+      '实验未生效 / 分桶计算失败',
+      '创意下架 / 出价系数过低'
+    ]
+  },
+  timeline: [
+    { time:'00:00', label:'当日 00:00 启动', category:'config', value:'门槛 = 40%' },
+    { time:'11:48', label:'实验组参竞率观察', category:'metric', detail:'参竞率稳定在 60%' },
+    { time:'11:50', label:'实验组配置变更', category:'config', detail:'操作人 lina · 实验组 A 准入门槛 40% → 80%' },
+    { time:'12:00', label:'新配置生效', category:'config', detail:'实验组 A 新门槛 80% 生效' },
+    { time:'12:05', label:'实验组参竞率骤降', category:'metric', detail:'从 60% 下降至 10%', value:'−50pp' },
+    { time:'12:30', label:'实验组曝光同步下滑', category:'impression', detail:'曝光量较 11:30 下降约 80%' },
+    { time:'12:00-18:00', label:'累计消耗', category:'cost', detail:'对照单元 250 元 · 实验单元 50 元', value:'50 / 800 元' }
+  ],
+  causeTree: [
+    { id:'c-budget', category:'budget', label:'预算与投放状态', result:'normal', confidence:95, impact:'low',
+      evidence:'日预算 1000 元、状态「投放中」，未触发预算耗尽停投',
+      metrics:[{name:'日预算',value:'¥1000'},{name:'实际消耗',value:'¥300'},{name:'达成率',value:'30%'}] },
+    { id:'c-binding', category:'binding', label:'对象与 RTA 绑定', result:'normal', confidence:98, impact:'low',
+      evidence:'RTAID 上线、媒体账户已绑定、绑定单元 2 个；RTAID 与实验一一对应',
+      metrics:[{name:'RTAID 状态',value:'上线'},{name:'绑定账户',value:'1 个'},{name:'已用 QPS',value:'42.8k / 300k'}] },
+    { id:'c-traffic', category:'traffic', label:'流量与请求', result:'normal', confidence:90, impact:'low',
+      evidence:'请求量平稳略升，未出现空流量；设备 ID 命中率 96%',
+      metrics:[{name:'请求量',value:'约 1.2M'},{name:'设备 ID 命中率',value:'96%'}] },
+    { id:'c-service', category:'service', label:'RTA 服务与容量', result:'normal', confidence:92, impact:'low',
+      evidence:'P95 响应 18ms、超时率 0.4%、错误率 0.6%，均在健康范围',
+      metrics:[{name:'P95 耗时',value:'18ms'},{name:'超时率',value:'0.4%'}] },
+    { id:'c-experiment', category:'experiment', label:'实验与分桶', result:'normal', confidence:90, impact:'low',
+      evidence:'实验中、分桶 1-10 全部生效、对照组与实验组流量各占 50%',
+      metrics:[{name:'实验状态',value:'运行中'},{name:'分桶生效',value:'10 / 10'}] },
+    { id:'c-strategy', category:'strategy', label:'策略与参竞', result:'abnormal', confidence:92, impact:'high',
+      evidence:'实验组门槛 80% 把大量请求挡在外面，参竞率从 60% 跌至 10%；对照组门槛 40% 未变，未能补量',
+      metrics:[{name:'实验组参竞率',value:'60% → 10%'},{name:'对照组参竞率',value:'60%'},{name:'实验组命中率',value:'12%'}] },
+    { id:'c-bidding', category:'bidding', label:'媒体竞价与投放', result:'abnormal', confidence:80, impact:'medium',
+      evidence:'实验组曝光同步下滑约 80%；出价系数未调整，CPA 出价仍为 28 元',
+      metrics:[{name:'实验组曝光',value:'−80%'},{name:'CPA 出价',value:'¥28'}] },
+    { id:'c-attribution', category:'attribution', label:'归因与回传', result:'normal', confidence:85, impact:'low',
+      evidence:'回传成功率 99.2%、归因口径无变化；不影响本次诊断结论',
+      metrics:[{name:'回传成功率',value:'99.2%'}] }
+  ],
+  recommendations: [
+    {
+      id:'rec-1',
+      action:'把实验组 A 准入门槛从 80% 下调到 60%',
+      before:'实验组 A 准入门槛 = 80%（11:50 生效）',
+      after:'实验组 A 准入门槛 = 60%',
+      impact:'实验组 A（5 / 10 个分桶，约 50% 项目流量）',
+      observeMetrics:['实验组参竞率（应回升至 50%+）','实验组曝光与消耗','实验组 CPA（目标 ≤ ¥30）','对照组表现（确认未被拉走预算）'],
+      successCriteria:'2 小时内参竞率回到 50% 以上、消耗较当前 +50%、CPA 不恶化超过 10%',
+      rollbackCondition:'若 2 小时内参竞率仍 < 30% 或 CPA 较当前恶化超过 20%，立刻把门槛恢复到 80% 并停止放量'
+    },
+    {
+      id:'rec-2',
+      action:'仅对 30% 实验组流量试跑，观察 2 小时',
+      before:'实验组全量 50% 项目流量',
+      after:'实验组仅保留 30% 项目流量（分桶 3、7、10）',
+      impact:'降低策略异常对整体预算达成的影响',
+      observeMetrics:['30% 子桶的参竞率','子桶曝光曲线','项目总消耗与达成率'],
+      successCriteria:'子桶参竞率 ≥ 40% 且项目总消耗较当前 +30%',
+      rollbackCondition:'子桶参竞率 < 25% 持续 1 小时，立刻恢复原分桶'
+    }
+  ],
+  technical: {
+    rtaId:'juliang-rta-2086',
+    internalRtaId:'RTA-RES-2086',
+    experimentId:'EXP-2026-08',
+    controlGroupId:'G-CONTROL',
+    treatmentGroupId:'G-TREAT-A',
+    bucketIds:[3,4,7,8,10],
+    requestId:'req-20260814T120530Z-b0d7a2',
+    logFieldPath:'rta.execution_log → strategy_group[0] → treatment_A',
+    configBefore:{ '准入门槛':'40%', '流量分配':'5 / 10 桶' },
+    configAfter:{ '准入门槛':'80%', '流量分配':'5 / 10 桶' },
+    dataSource:'rta-execution-log + media-report-2026-08-14',
+    dataUpdatedAt:'2026-08-14 18:42:11'
+  }
+}
+
+// ──────────────────────────────────────────────────────────────
+// 状态机
+// ──────────────────────────────────────────────────────────────
+const STATUS_LABEL = {
+  idle: '未发起', reading: '读取数据中', diagnosing: '诊断中',
+  completed: '待人工确认', pending_execute: '等待人工执行',
+  waiting_data: '等待数据回流', reviewed: '复盘完成',
+  insufficient: '数据不足', failed: '诊断失败'
+}
+
+// ──────────────────────────────────────────────────────────────
+// 根组件
+// ──────────────────────────────────────────────────────────────
+const App = {
+  setup() {
+    const drawerOpen = ref(false)
+    const status = ref('idle')
+    const currentProjectId = ref(null)
+    const showTechnical = ref(false)
+    const expandedCauseIds = ref(new Set())
+    const activeRecId = ref(goldenReport.recommendations[0].id)
+    const timers = []
+
+    function clearTimers() { timers.forEach(clearTimeout); timers.length = 0 }
+
+    function startDiagnosis(projectId) {
+      clearTimers()
+      currentProjectId.value = projectId
+      status.value = 'reading'
+      drawerOpen.value = true
+      showTechnical.value = false
+      expandedCauseIds.value = new Set()
+      activeRecId.value = goldenReport.recommendations[0].id
+      timers.push(setTimeout(() => { if (status.value === 'reading') status.value = 'diagnosing' }, 1300))
+      timers.push(setTimeout(() => { if (status.value === 'diagnosing') status.value = 'completed' }, 3300))
+    }
+    function approve() { if (status.value === 'completed') status.value = 'pending_execute' }
+    function modify() { if (status.value === 'completed') status.value = 'pending_execute' }
+    function reject() { status.value = 'failed' }
+    function markExecuted() { if (status.value === 'pending_execute') status.value = 'waiting_data' }
+    function markReviewed() { if (status.value === 'waiting_data') status.value = 'reviewed' }
+    function retry() {
+      if (status.value === 'failed' || status.value === 'insufficient' || status.value === 'reviewed') {
+        if (currentProjectId.value) startDiagnosis(currentProjectId.value)
+      }
+    }
+    function closeDrawer() { drawerOpen.value = false; clearTimers() }
+    function toggleCause(id) {
+      const s = new Set(expandedCauseIds.value)
+      s.has(id) ? s.delete(id) : s.add(id)
+      expandedCauseIds.value = s
+    }
+    function toggleTechnical() { showTechnical.value = !showTechnical.value }
+
+    const currentProject = computed(() => {
+      const row = deliveryList.find(r => r.project.projectId === currentProjectId.value)
+      return row ? row.project : deliveryList[0].project
+    })
+    const currentAccount = computed(() => {
+      const row = deliveryList.find(r => r.project.projectId === currentProjectId.value)
+      return row ? row.account : deliveryList[0].account
+    })
+    const activeRec = computed(() =>
+      goldenReport.recommendations.find(r => r.id === activeRecId.value) || goldenReport.recommendations[0]
+    )
+    const abnormalCount = computed(() => deliveryList.filter(r => r.project.abnormal).length)
+    const isProcessing = computed(() => status.value === 'reading' || status.value === 'diagnosing')
+    const abnormalCauseCount = computed(() => goldenReport.causeTree.filter(n => n.result === 'abnormal').length)
+
+    function fmtYuan(n) { return '¥' + n.toLocaleString('zh-CN') }
+    function fmtRate(r) { return Math.round(r * 100) + '%' }
+    function causeTone(node) {
+      if (node.result === 'abnormal') return { dot:'bg-rose-400', text:'text-rose-500', bg:'bg-rose-50', border:'border-rose-200', label:'异常' }
+      if (node.result === 'excluded') return { dot:'bg-ink-300', text:'text-ink-500', bg:'bg-ink-50', border:'border-ink-200', label:'已排除' }
+      return { dot:'bg-emerald-400', text:'text-emerald-600', bg:'bg-emerald-50', border:'border-emerald-100', label:'正常' }
+    }
+    function impactTone(impact) {
+      if (impact === 'high') return 'bg-rose-50 text-rose-500'
+      if (impact === 'medium') return 'bg-amber-50 text-amber-600'
+      return 'bg-ink-50 text-ink-500'
+    }
+    function statusBadgeClass(s) {
+      const map = {
+        idle: 'bg-ink-100 text-ink-600',
+        reading: 'bg-sky-50 text-sky-600',
+        diagnosing: 'bg-sky-50 text-sky-600',
+        completed: 'bg-amber-50 text-amber-600',
+        pending_execute: 'bg-amber-50 text-amber-600',
+        waiting_data: 'bg-sky-50 text-sky-600',
+        reviewed: 'bg-emerald-50 text-emerald-600',
+        insufficient: 'bg-ink-100 text-ink-600',
+        failed: 'bg-rose-50 text-rose-500'
+      }
+      return map[s] || 'bg-ink-100 text-ink-600'
+    }
+
+    return {
+      deliveryList, goldenReport, glossary,
+      drawerOpen, status, currentProjectId, currentProject, currentAccount,
+      showTechnical, expandedCauseIds, activeRecId, activeRec,
+      abnormalCount, isProcessing, abnormalCauseCount,
+      startDiagnosis, approve, modify, reject, markExecuted, markReviewed, retry, closeDrawer,
+      toggleCause, toggleTechnical,
+      fmtYuan, fmtRate, causeTone, impactTone, statusBadgeClass,
+      STATUS_LABEL
+    }
+  },
+  template: `
+  <div class="min-h-[100dvh] flex flex-col">
+    <!-- 顶部导航 -->
+    <nav class="h-12 bg-white border-b border-ink-200 flex items-center px-4 gap-4 shrink-0">
+      <div class="flex items-center gap-2">
+        <span class="w-6 h-6 rounded bg-teal-600 text-white inline-flex items-center justify-center">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        </span>
+        <span class="text-sm font-semibold text-ink-800">投放平台 · RTA</span>
+        <span class="inline-flex items-center px-1.5 h-5 text-2xs font-medium rounded bg-ink-100 text-ink-500">Mock Demo</span>
+      </div>
+      <nav class="flex items-center gap-0.5 ml-6">
+        <a class="px-2.5 h-8 inline-flex items-center text-sm font-medium text-ink-800 border-b-2 border-teal-500">投放项目</a>
+        <a class="px-2.5 h-8 inline-flex items-center text-sm text-ink-500 hover:text-ink-800 cursor-pointer">策略工厂</a>
+        <a class="px-2.5 h-8 inline-flex items-center text-sm text-ink-500 hover:text-ink-800 cursor-pointer">RTA 实验</a>
+        <a class="px-2.5 h-8 inline-flex items-center text-sm text-ink-500 hover:text-ink-800 cursor-pointer">数据中心</a>
+      </nav>
+      <div class="ml-auto flex items-center gap-1">
+        <div class="relative">
+          <button class="inline-flex items-center justify-center w-8 h-8 rounded text-ink-500 hover:bg-ink-100">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+          </button>
+          <span class="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center text-2xs bg-rose-500 text-white rounded-full w-4 h-4 num">{{ abnormalCount }}</span>
+        </div>
+        <button class="inline-flex items-center justify-center w-8 h-8 rounded text-ink-500 hover:bg-ink-100">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </button>
+        <div class="ml-2 flex items-center gap-2">
+          <div class="w-7 h-7 rounded-full bg-teal-100 text-teal-700 inline-flex items-center justify-center text-xs font-medium">K</div>
+          <span class="text-sm text-ink-700">Kiki</span>
+        </div>
+      </div>
+    </nav>
+
+    <!-- 投放列表 -->
+    <main class="flex-1 min-w-0 px-8 py-6">
+      <header class="mb-5">
+        <nav class="flex items-center gap-1.5 text-xs text-ink-500 mb-2">
+          <span>投放管理</span><span class="text-ink-300">/</span><span class="text-ink-700">投放项目列表</span>
+        </nav>
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <h1 class="text-xl font-semibold text-ink-800 tracking-tight">RTA 投放项目</h1>
+            <p class="text-sm text-ink-500 mt-0.5">按项目查看日预算和实际消耗，对异常项目发起 RTA 诊断</p>
+          </div>
+          <div class="flex items-center gap-2 text-xs text-ink-500">
+            <span class="inline-flex items-center gap-1.5">
+              <span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-400"></span>异常项目<span class="num text-ink-800 font-medium">{{ abnormalCount }}</span>
+            </span>
+            <span class="text-ink-300">·</span>
+            <span>本页共 <span class="num text-ink-800 font-medium">{{ deliveryList.length }}</span> 个项目</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- 筛选条 -->
+      <div class="bg-white rounded-lg shadow-panel border border-ink-200 mb-4">
+        <div class="flex items-center gap-2 px-3 h-12">
+          <div class="flex items-center gap-2 h-8 px-2.5 bg-ink-50 border border-ink-200 rounded text-sm flex-1 max-w-xs focus-within:border-teal-400 focus-within:bg-white">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-ink-400"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            <input type="text" placeholder="搜索项目名称 / ID" class="flex-1 bg-transparent outline-none placeholder-ink-400 text-ink-800" />
+          </div>
+          <button class="inline-flex items-center gap-1.5 px-3 h-8 text-sm font-medium rounded border bg-white text-ink-700 border-ink-200 hover:border-ink-300">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>筛选
+          </button>
+          <div class="ml-auto flex items-center gap-2 text-xs text-ink-500">
+            <span>媒体：</span>
+            <button class="inline-flex items-center px-3 h-8 text-sm font-medium rounded border bg-white text-ink-700 border-ink-200">巨量</button>
+            <span>日期：</span>
+            <button class="inline-flex items-center px-3 h-8 text-sm font-medium rounded border bg-white text-ink-700 border-ink-200"><span class="num">2026-08-14</span></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 列表 -->
+      <div class="bg-white rounded-lg shadow-panel border border-ink-200 overflow-hidden">
+        <table class="w-full table-fixed">
+          <colgroup>
+            <col class="w-[120px]" /><col class="w-[180px]" /><col /><col class="w-[110px]" />
+            <col class="w-[100px]" /><col class="w-[100px]" /><col class="w-[180px]" /><col class="w-[110px]" /><col class="w-[140px]" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="px-3 h-10 text-left text-xs font-medium text-ink-500 tracking-wide bg-ink-50 border-b border-ink-200">媒体</th>
+              <th class="px-3 h-10 text-left text-xs font-medium text-ink-500 tracking-wide bg-ink-50 border-b border-ink-200">账户</th>
+              <th class="px-3 h-10 text-left text-xs font-medium text-ink-500 tracking-wide bg-ink-50 border-b border-ink-200">项目</th>
+              <th class="px-3 h-10 text-left text-xs font-medium text-ink-500 tracking-wide bg-ink-50 border-b border-ink-200">诊断日期</th>
+              <th class="px-3 h-10 text-right text-xs font-medium text-ink-500 tracking-wide bg-ink-50 border-b border-ink-200">日预算</th>
+              <th class="px-3 h-10 text-right text-xs font-medium text-ink-500 tracking-wide bg-ink-50 border-b border-ink-200">实际消耗</th>
+              <th class="px-3 h-10 text-left text-xs font-medium text-ink-500 tracking-wide bg-ink-50 border-b border-ink-200">预算达成率</th>
+              <th class="px-3 h-10 text-left text-xs font-medium text-ink-500 tracking-wide bg-ink-50 border-b border-ink-200">异常状态</th>
+              <th class="px-3 h-10 text-right text-xs font-medium text-ink-500 tracking-wide bg-ink-50 border-b border-ink-200">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-if="deliveryList.length === 0">
+              <td colspan="9" class="px-3 py-16 text-center border-b border-ink-100">
+                <div class="flex flex-col items-center gap-2 text-ink-400">
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M3 12h6l3-9 6 18 3-9h3"/></svg>
+                  <p class="text-sm">当前筛选条件下暂无投放项目</p>
+                  <p class="text-xs text-ink-400">尝试调整媒体、日期或搜索关键词</p>
+                </div>
+              </td>
+            </tr>
+            <tr v-for="row in deliveryList" :key="row.project.projectId" class="hover:bg-ink-50/50 transition-colors">
+              <td class="px-3 h-12 text-sm text-ink-800 border-b border-ink-100">
+                <div class="flex items-center gap-1.5">
+                  <span class="inline-block w-1.5 h-1.5 rounded-full" :class="row.project.abnormal ? 'bg-rose-400' : 'bg-emerald-400'"></span>
+                  <span>巨量</span>
+                </div>
+              </td>
+              <td class="px-3 h-12 text-sm border-b border-ink-100">
+                <div class="flex flex-col">
+                  <span class="text-ink-800 truncate">{{ row.account.name }}</span>
+                  <span class="text-2xs text-ink-400 num">{{ row.account.mediaSideAccountId }}</span>
+                </div>
+              </td>
+              <td class="px-3 h-12 text-sm border-b border-ink-100">
+                <div class="flex flex-col min-w-0">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <span class="font-medium text-ink-800 truncate">{{ row.project.name }}</span>
+                    <span class="text-2xs text-ink-400 num shrink-0">{{ row.project.projectId }}</span>
+                  </div>
+                  <span class="text-2xs text-ink-400 mt-0.5 truncate">{{ row.project.unitSummary }}</span>
+                </div>
+              </td>
+              <td class="px-3 h-12 text-sm border-b border-ink-100"><span class="num text-ink-700">{{ row.project.diagnoseDate }}</span></td>
+              <td class="px-3 h-12 text-sm text-right border-b border-ink-100"><span class="num font-medium text-ink-800">{{ fmtYuan(row.project.dailyBudget) }}</span></td>
+              <td class="px-3 h-12 text-sm text-right border-b border-ink-100"><span class="num font-medium text-ink-800">{{ fmtYuan(row.project.actualCost) }}</span></td>
+              <td class="px-3 h-12 text-sm border-b border-ink-100">
+                <div class="flex items-center gap-2">
+                  <div class="flex-1 h-1.5 bg-ink-100 rounded-full overflow-hidden">
+                    <div class="h-full rounded-full" :class="row.project.achievementRate >= 0.8 ? 'bg-emerald-400' : (row.project.achievementRate >= 0.5 ? 'bg-amber-400' : 'bg-rose-400')" :style="{ width: Math.max(2, row.project.achievementRate * 100) + '%' }"></div>
+                  </div>
+                  <span class="num text-xs text-ink-700 w-9 text-right">{{ fmtRate(row.project.achievementRate) }}</span>
+                </div>
+              </td>
+              <td class="px-3 h-12 text-sm border-b border-ink-100">
+                <span v-if="row.project.abnormal" class="inline-flex items-center gap-1 px-1.5 h-5 text-2xs font-medium rounded bg-rose-50 text-rose-500">
+                  <span class="inline-block w-1 h-1 rounded-full bg-rose-400"></span>预算未达标
+                </span>
+                <span v-else class="inline-flex items-center gap-1 px-1.5 h-5 text-2xs font-medium rounded bg-emerald-50 text-emerald-500">
+                  <span class="inline-block w-1 h-1 rounded-full bg-emerald-400"></span>正常
+                </span>
+              </td>
+              <td class="px-3 h-12 text-sm text-right border-b border-ink-100">
+                <div class="flex items-center justify-end gap-2">
+                  <button class="inline-flex items-center px-2 h-7 text-xs text-ink-600 hover:text-ink-800 rounded">查看</button>
+                  <button v-if="row.project.abnormal" @click="startDiagnosis(row.project.projectId)" class="inline-flex items-center gap-1.5 px-2.5 h-7 text-xs font-medium rounded bg-teal-600 text-white border border-teal-600 hover:bg-teal-700">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1a.2.2 0 1 0 .3.3"/><path d="M8 15v1a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6v-4"/><circle cx="20" cy="10" r="2"/></svg>
+                    发起诊断
+                  </button>
+                  <button v-else @click="startDiagnosis(row.project.projectId)" class="inline-flex items-center gap-1.5 px-2.5 h-7 text-xs font-medium rounded bg-white text-ink-700 border border-ink-200 hover:border-ink-300">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1a.2.2 0 1 0 .3.3"/><path d="M8 15v1a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6v-4"/><circle cx="20" cy="10" r="2"/></svg>
+                    复盘
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="flex items-center justify-between px-3 h-10 text-xs text-ink-500 border-t border-ink-100">
+          <span>仅展示选中的媒体和日期范围 · 全部数据为 Mock</span>
+          <span>共 <span class="num font-medium text-ink-700">{{ deliveryList.length }}</span> 项</span>
+        </div>
+      </div>
+
+      <!-- 设计要点提示（轻量信息条） -->
+      <div class="mt-4 grid grid-cols-3 gap-3 text-xs">
+        <div class="bg-white rounded-lg border border-ink-200 p-3">
+          <p class="text-2xs text-ink-500 mb-1">本 Demo 范围</p>
+          <p class="text-ink-700 leading-relaxed">单一媒体（巨量）· 1 账户 · 1 项目 · 2 单元 · 2 创意 · 1 RTAID · 1 实验 · 1 对照组 + 1 实验组</p>
+        </div>
+        <div class="bg-white rounded-lg border border-ink-200 p-3">
+          <p class="text-2xs text-ink-500 mb-1">Golden Case</p>
+          <p class="text-ink-700 leading-relaxed">日预算 ¥1000 · 实际消耗 ¥300 · 实验组门槛 40→80% · 参竞率 60→10%</p>
+        </div>
+        <div class="bg-white rounded-lg border border-ink-200 p-3">
+          <p class="text-2xs text-ink-500 mb-1">人工边界</p>
+          <p class="text-ink-700 leading-relaxed">不接真实媒体 API · 不改真实预算 / 策略 · 批准后只生成草稿</p>
+        </div>
+      </div>
+    </main>
+
+    <!-- 遮罩 -->
+    <transition name="fade">
+      <div v-if="drawerOpen" class="fixed inset-0 z-40 bg-ink-900/30 fadein" @click="closeDrawer"></div>
+    </transition>
+
+    <!-- 右侧诊断抽屉 -->
+    <transition name="drawer-slide">
+      <aside v-if="drawerOpen" class="fixed top-0 right-0 bottom-0 z-50 bg-white shadow-drawer flex flex-col slidein" style="width:720px" role="dialog" aria-label="RTA 诊断面板">
+        <!-- 抽屉头部 -->
+        <header class="px-5 py-3 border-b border-ink-200 bg-white shrink-0">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 text-xs text-ink-500 mb-1">
+                <span>巨量</span>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                <span>{{ currentProject.name }}</span>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                <span>实验组 A · 投放单元 U-T-001</span>
+              </div>
+              <h2 class="text-base font-semibold text-ink-800 tracking-tight flex items-center gap-2">
+                <span class="inline-flex items-center justify-center w-6 h-6 rounded bg-teal-50 text-teal-600">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                </span>
+                RTA 诊断
+                <span class="inline-flex items-center gap-1 px-1.5 h-5 text-2xs font-medium rounded" :class="statusBadgeClass(status)">
+                  <span v-if="isProcessing" class="inline-block w-1 h-1 rounded-full bg-current spin"></span>
+                  {{ STATUS_LABEL[status] }}
+                </span>
+              </h2>
+            </div>
+            <button class="inline-flex items-center justify-center w-8 h-8 rounded text-ink-500 hover:bg-ink-100" @click="closeDrawer" aria-label="关闭">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+
+          <div v-if="!isProcessing && status !== 'idle' && status !== 'failed'" class="grid grid-cols-4 gap-x-3 gap-y-1.5 mt-3 px-3 py-2 bg-ink-50 rounded-md border border-ink-200">
+            <div class="flex items-baseline gap-2 min-w-0"><span class="text-xs text-ink-500 shrink-0">诊断日期</span><span class="num text-sm font-medium text-ink-800">2026-08-14</span></div>
+            <div class="flex items-baseline gap-2 min-w-0"><span class="text-xs text-ink-500 shrink-0">RTAID</span><span class="text-sm font-medium text-ink-800 truncate">2086（巨量）</span></div>
+            <div class="flex items-baseline gap-2 min-w-0"><span class="text-xs text-ink-500 shrink-0">实验 ID</span><span class="num text-sm font-medium text-ink-800">EXP-2026-08</span></div>
+            <div class="flex items-baseline gap-2 min-w-0"><span class="text-xs text-ink-500 shrink-0">活动类型</span><span class="text-sm font-medium text-ink-800">AB 实验</span></div>
+          </div>
+        </header>
+
+        <!-- 读取数据中 / 诊断中 -->
+        <div v-if="isProcessing" class="flex-1 flex flex-col items-center justify-center px-10 py-12 text-center">
+          <div class="relative w-16 h-16 mb-5">
+            <span class="absolute inset-0 rounded-full bg-sky-50"></span>
+            <span class="absolute inset-2 rounded-full bg-sky-100"></span>
+            <span class="absolute inset-0 rounded-full border-2 border-sky-200 border-t-sky-500 spin"></span>
+            <span class="absolute inset-0 flex items-center justify-center text-sky-600">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="spin"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+            </span>
+          </div>
+          <h3 class="text-base font-semibold text-ink-800 mb-1.5">
+            {{ status === 'reading' ? '正在读取策略、实验、QPS 与执行日志…' : 'Agent 正在综合多信号判断跑量根因…' }}
+          </h3>
+          <p class="text-sm text-ink-500 max-w-sm leading-relaxed">
+            {{ status === 'reading' ? '已确认项目、媒体账户、RTAID、实验配置，正在拉取近 24 小时请求、命中、参竞和消耗数据。' : '正在交叉比对实验组 / 对照组参竞率、曝光与消耗曲线，逐步收缩可疑根因。' }}
+          </p>
+          <div class="w-64 mt-6">
+            <div class="h-1 bg-ink-100 rounded-full overflow-hidden">
+              <div class="h-full bg-sky-500 rounded-full transition-all duration-1000" :style="{ width: status === 'reading' ? '33%' : '66%' }"></div>
+            </div>
+            <div class="flex justify-between mt-1.5 text-2xs text-ink-400 num">
+              <span>读取数据</span><span>综合诊断</span><span>输出方案</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 数据不足 / 失败 / 未发起 -->
+        <div v-else-if="status === 'insufficient'" class="flex-1 flex flex-col items-center justify-center px-10 py-12 text-center">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-ink-300 mb-4"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <h3 class="text-base font-semibold text-ink-800 mb-2">当前数据不足以判断根因</h3>
+          <p class="text-sm text-ink-500 max-w-sm mb-6 leading-relaxed">实验组近 1 小时请求量较低，且执行日志缺失；建议等待 30 分钟或补充监控后重新诊断。</p>
+          <button class="inline-flex items-center gap-1.5 px-3 h-8 text-sm font-medium rounded border bg-white text-ink-700 border-ink-200 hover:border-ink-300" @click="retry">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>30 分钟后重新诊断
+          </button>
+        </div>
+
+        <div v-else-if="status === 'failed'" class="flex-1 flex flex-col items-center justify-center px-10 py-12 text-center">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-rose-400 mb-4"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+          <h3 class="text-base font-semibold text-ink-800 mb-2">诊断未通过</h3>
+          <p class="text-sm text-ink-500 max-w-sm mb-6 leading-relaxed">方案被人工拒绝，或信号冲突；可以查看上下文或重新发起诊断。</p>
+          <div class="flex items-center gap-2">
+            <button class="inline-flex items-center gap-1.5 px-3 h-8 text-sm font-medium rounded border bg-white text-ink-700 border-ink-200" @click="closeDrawer">关闭</button>
+            <button class="inline-flex items-center gap-1.5 px-3 h-8 text-sm font-medium rounded bg-teal-600 text-white border border-teal-600 hover:bg-teal-700" @click="retry">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>重新诊断
+            </button>
+          </div>
+        </div>
+
+        <div v-else-if="status === 'idle'" class="flex-1 flex flex-col items-center justify-center px-10 py-12 text-center">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-ink-300 mb-4"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+          <h3 class="text-base font-semibold text-ink-800 mb-2">诊断尚未发起</h3>
+          <p class="text-sm text-ink-500 max-w-sm leading-relaxed">请回到投放列表选择项目，点击「发起诊断」开始一次新的诊断。</p>
+        </div>
+
+        <!-- 等待人工执行 -->
+        <div v-else-if="status === 'pending_execute'" class="flex-1 flex items-center justify-center px-10">
+          <div class="text-center max-w-md">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-500 mx-auto mb-4"><path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/></svg>
+            <h3 class="text-base font-semibold text-ink-800 mb-2">已生成配置草稿，等待人工执行</h3>
+            <p class="text-sm text-ink-500 mb-5 leading-relaxed">本次诊断仅生成策略草稿，<strong class="text-amber-600">未修改任何真实预算或出价</strong>。请到 策略工厂 / RTA 实验 页面审批通过该变更。</p>
+            <div class="rounded-md border border-ink-200 bg-ink-50 p-3 text-left mb-5">
+              <p class="text-xs text-ink-700 leading-relaxed"><span class="font-medium text-ink-800">草稿摘要：</span>实验组 A 准入门槛 80% → 60%（先小流量试跑），观察参竞率、曝光、消耗、CPA 四项指标。</p>
+            </div>
+            <button class="inline-flex items-center gap-1.5 px-3 h-8 text-sm font-medium rounded bg-teal-600 text-white border border-teal-600 hover:bg-teal-700" @click="markExecuted">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>我已执行，等待数据回流
+            </button>
+          </div>
+        </div>
+
+        <!-- 等待数据回流 -->
+        <div v-else-if="status === 'waiting_data'" class="flex-1 flex items-center justify-center px-10">
+          <div class="text-center max-w-md">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-sky-500 mx-auto mb-4"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+            <h3 class="text-base font-semibold text-ink-800 mb-2">策略已生效，正在等待数据回流</h3>
+            <p class="text-sm text-ink-500 mb-5 leading-relaxed">期望 2 小时内观察到实验组参竞率回升、消耗增长。回流数据齐全后将进入复盘。</p>
+            <div class="grid grid-cols-3 gap-2 text-left mb-5">
+              <div class="rounded-md border border-ink-200 p-2.5 bg-white">
+                <p class="text-2xs text-ink-500">实验组参竞率</p>
+                <p class="num text-base font-medium text-emerald-500 mt-0.5">10% → 48%</p>
+              </div>
+              <div class="rounded-md border border-ink-200 p-2.5 bg-white">
+                <p class="text-2xs text-ink-500">实验组消耗</p>
+                <p class="num text-base font-medium text-emerald-500 mt-0.5">+62%</p>
+              </div>
+              <div class="rounded-md border border-ink-200 p-2.5 bg-white">
+                <p class="text-2xs text-ink-500">实验组 CPA</p>
+                <p class="num text-base font-medium text-ink-700 mt-0.5">¥31</p>
+              </div>
+            </div>
+            <button class="inline-flex items-center gap-1.5 px-3 h-8 text-sm font-medium rounded border bg-white text-ink-700 border-ink-200 hover:border-ink-300" @click="markReviewed">手动完成复盘</button>
+          </div>
+        </div>
+
+        <!-- 复盘完成 -->
+        <div v-else-if="status === 'reviewed'" class="flex-1 flex items-center justify-center px-10">
+          <div class="text-center max-w-md">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-emerald-500 mx-auto mb-4"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            <h3 class="text-base font-semibold text-ink-800 mb-2">复盘完成 · 实验已归档</h3>
+            <p class="text-sm text-ink-500 mb-5 leading-relaxed">实验组 A 准入门槛调整有效，预计 24 小时内项目预算达成率回升至 80%+。本次诊断结果已沉淀到历史案例。</p>
+            <div class="grid grid-cols-2 gap-2 text-left mb-5">
+              <div class="rounded-md border border-ink-200 p-3 bg-white">
+                <p class="text-2xs text-ink-500 mb-1">实验组最终参竞率</p>
+                <p class="num text-lg font-medium text-emerald-500">62%</p>
+              </div>
+              <div class="rounded-md border border-ink-200 p-3 bg-white">
+                <p class="text-2xs text-ink-500 mb-1">项目预算达成率</p>
+                <p class="num text-lg font-medium text-emerald-500">84%</p>
+              </div>
+            </div>
+            <div class="flex items-center justify-center gap-2">
+              <button class="inline-flex items-center gap-1.5 px-3 h-8 text-sm font-medium rounded border bg-white text-ink-700 border-ink-200" @click="closeDrawer">关闭</button>
+              <button class="inline-flex items-center gap-1.5 px-3 h-8 text-sm font-medium rounded border bg-white text-ink-700 border-ink-200" @click="retry">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>再诊断一次
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 诊断完成主区 -->
+        <div v-else-if="status === 'completed'" class="flex-1 min-h-0 flex">
+          <div class="flex-1 min-w-0 overflow-y-auto px-5 py-5 space-y-6">
+            <!-- §1 一句话结论 -->
+            <section>
+              <h3 class="text-sm font-semibold text-ink-800 tracking-tight mb-2 flex items-center gap-1.5">
+                <span class="w-1 h-3 bg-teal-500 rounded-sm"></span>01 · 一句话结论
+              </h3>
+              <p class="text-sm font-medium text-ink-800 leading-relaxed bg-teal-50/60 border-l-2 border-teal-500 px-3 py-2.5 rounded">{{ goldenReport.oneLiner }}</p>
+              <details class="mt-2">
+                <summary class="text-xs text-teal-600 hover:text-teal-700 cursor-pointer select-none">查看管理摘要（面向老板 / 非专业同事）</summary>
+                <p class="text-xs text-ink-600 leading-relaxed mt-2 px-3 py-2 bg-ink-50 rounded">{{ goldenReport.managerSummary }}</p>
+              </details>
+            </section>
+
+            <!-- §2 影响概览 -->
+            <section>
+              <h3 class="text-sm font-semibold text-ink-800 tracking-tight mb-2 flex items-center gap-1.5">
+                <span class="w-1 h-3 bg-teal-500 rounded-sm"></span>02 · 影响概览
+              </h3>
+              <div class="grid grid-cols-4 gap-2">
+                <div class="border border-ink-200 rounded-md p-2.5">
+                  <p class="text-2xs text-ink-500">日预算</p>
+                  <p class="num text-base font-medium text-ink-800 mt-0.5">{{ fmtYuan(goldenReport.impact.budget) }}</p>
+                </div>
+                <div class="border border-ink-200 rounded-md p-2.5">
+                  <p class="text-2xs text-ink-500">实际消耗</p>
+                  <p class="num text-base font-medium text-ink-800 mt-0.5">{{ fmtYuan(goldenReport.impact.cost) }}</p>
+                </div>
+                <div class="border border-amber-200 rounded-md p-2.5 bg-amber-50/50">
+                  <p class="text-2xs text-amber-600">预算差额</p>
+                  <p class="num text-base font-medium text-amber-600 mt-0.5">{{ fmtYuan(goldenReport.impact.gap) }}</p>
+                </div>
+                <div class="border border-amber-200 rounded-md p-2.5 bg-amber-50/50">
+                  <p class="text-2xs text-amber-600">达成率</p>
+                  <p class="num text-base font-medium text-amber-600 mt-0.5">{{ fmtRate(goldenReport.impact.achievementRate) }}</p>
+                </div>
+              </div>
+              <p class="text-xs text-ink-500 mt-2">影响范围：<span class="text-ink-700">{{ goldenReport.impact.affectedScope }}</span></p>
+            </section>
+
+            <!-- §3 原因排序 -->
+            <section>
+              <h3 class="text-sm font-semibold text-ink-800 tracking-tight mb-2 flex items-center gap-1.5">
+                <span class="w-1 h-3 bg-teal-500 rounded-sm"></span>03 · 原因排序
+              </h3>
+              <div class="space-y-1.5">
+                <div class="flex items-baseline gap-2 text-sm leading-relaxed">
+                  <span class="inline-flex items-center gap-1 px-1.5 h-5 text-2xs font-medium rounded bg-rose-50 text-rose-500 shrink-0">主因</span>
+                  <span class="text-ink-800">{{ goldenReport.causes.primary }}</span>
+                </div>
+                <div class="flex items-baseline gap-2 text-sm leading-relaxed">
+                  <span class="inline-flex items-center gap-1 px-1.5 h-5 text-2xs font-medium rounded bg-amber-50 text-amber-600 shrink-0">次因</span>
+                  <span class="text-ink-700">{{ goldenReport.causes.secondary }}</span>
+                </div>
+                <div class="rounded-md bg-ink-50 border border-ink-200 px-3 py-2">
+                  <p class="text-xs text-ink-500 mb-1">已排除（{{ goldenReport.causes.excluded.length }} 项）</p>
+                  <ul class="space-y-0.5 text-xs text-ink-500">
+                    <li v-for="(ex, i) in goldenReport.causes.excluded" :key="i" class="flex gap-1.5 items-start">
+                      <span class="text-ink-400 mt-0.5">·</span><span>{{ ex }}</span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </section>
+
+            <!-- §4 证据时间线 -->
+            <section>
+              <h3 class="text-sm font-semibold text-ink-800 tracking-tight mb-3 flex items-center gap-1.5">
+                <span class="w-1 h-3 bg-teal-500 rounded-sm"></span>04 · 证据时间线
+              </h3>
+              <ol class="relative">
+                <span class="absolute left-[15px] top-2 bottom-2 w-px bg-ink-200" aria-hidden="true"></span>
+                <li v-for="(e, i) in goldenReport.timeline" :key="i" class="relative flex gap-3 pb-3 last:pb-0">
+                  <span class="relative z-10 w-8 h-8 inline-flex items-center justify-center rounded-full border bg-white shrink-0"
+                    :class="{
+                      'text-amber-600 bg-amber-50 border-amber-200': e.category === 'config',
+                      'text-sky-500 bg-sky-50 border-sky-100': e.category === 'metric',
+                      'text-ink-500 bg-ink-50 border-ink-200': e.category === 'impression',
+                      'text-rose-500 bg-rose-50 border-rose-100': e.category === 'cost'
+                    }">
+                    <svg v-if="e.category === 'config'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                    <svg v-else-if="e.category === 'metric'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                    <svg v-else-if="e.category === 'impression'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M16 12h4"/><path d="M12 8V4"/></svg>
+                  </span>
+                  <div class="flex-1 min-w-0 pt-1">
+                    <div class="flex items-baseline gap-2">
+                      <span class="num text-xs font-medium text-ink-700">{{ e.time }}</span>
+                      <span class="text-sm font-medium text-ink-800 truncate">{{ e.label }}</span>
+                      <span v-if="e.value" class="num text-xs font-medium text-amber-600 shrink-0">{{ e.value }}</span>
+                    </div>
+                    <p v-if="e.detail" class="text-xs text-ink-500 mt-0.5 leading-relaxed">{{ e.detail }}</p>
+                  </div>
+                </li>
+              </ol>
+            </section>
+
+            <!-- §5 原因树 -->
+            <section>
+              <h3 class="text-sm font-semibold text-ink-800 tracking-tight mb-2 flex items-center gap-1.5">
+                <span class="w-1 h-3 bg-teal-500 rounded-sm"></span>05 · 原因树详情
+              </h3>
+              <p class="text-xs text-ink-500 mb-2.5">检查 8 个常见根因层。当前结果：<span class="text-rose-500 font-medium">{{ abnormalCauseCount }} 项异常</span>，{{ 8 - abnormalCauseCount }} 项正常。</p>
+              <div class="space-y-1.5">
+                <div v-for="node in goldenReport.causeTree" :key="node.id" class="border rounded-md overflow-hidden" :class="causeTone(node).border">
+                  <button class="w-full flex items-center gap-2 px-3 py-2 text-left bg-white hover:bg-ink-50/50 transition-colors" @click="toggleCause(node.id)">
+                    <span class="inline-block w-1.5 h-1.5 rounded-full shrink-0" :class="causeTone(node).dot"></span>
+                    <span class="text-sm font-medium text-ink-800 flex-1 truncate">{{ node.label }}</span>
+                    <span class="inline-flex items-center px-1.5 h-5 text-2xs font-medium rounded shrink-0" :class="causeTone(node).bg + ' ' + causeTone(node).text">{{ causeTone(node).label }}</span>
+                    <span class="inline-flex items-center px-1.5 h-5 text-2xs font-medium rounded bg-ink-50 text-ink-500 shrink-0">置信度 <span class="num ml-0.5">{{ node.confidence }}%</span></span>
+                    <span class="inline-flex items-center px-1.5 h-5 text-2xs font-medium rounded shrink-0" :class="impactTone(node.impact)">{{ node.impact === 'high' ? '高影响' : (node.impact === 'medium' ? '中影响' : '低影响') }}</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-ink-400 transition-transform" :class="expandedCauseIds.has(node.id) ? 'rotate-90' : ''"><polyline points="9 18 15 12 9 6"/></svg>
+                  </button>
+                  <div v-if="expandedCauseIds.has(node.id)" class="px-3 pb-3 pt-1 bg-ink-50/40 border-t border-ink-100">
+                    <p class="text-xs text-ink-700 leading-relaxed mt-2">{{ node.evidence }}</p>
+                    <div v-if="node.metrics && node.metrics.length" class="grid grid-cols-3 gap-2 mt-2">
+                      <div v-for="m in node.metrics" :key="m.name" class="bg-white border border-ink-200 rounded px-2 py-1.5">
+                        <p class="text-2xs text-ink-500">{{ m.name }}</p>
+                        <p class="num text-xs font-medium text-ink-800 mt-0.5">{{ m.value }}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- §6 建议方案 -->
+            <section>
+              <h3 class="text-sm font-semibold text-ink-800 tracking-tight mb-2 flex items-center gap-1.5">
+                <span class="w-1 h-3 bg-teal-500 rounded-sm"></span>06 · 实验方案草稿
+              </h3>
+              <div class="flex gap-1.5 mb-2.5">
+                <button v-for="rec in goldenReport.recommendations" :key="rec.id" @click="activeRecId = rec.id"
+                  :class="['px-2.5 h-7 text-xs font-medium rounded-md border transition-colors',
+                    rec.id === activeRecId ? 'border-teal-500 text-teal-700 bg-teal-50' : 'border-ink-200 text-ink-600 hover:border-ink-300']">
+                  方案 #{{ rec.id.split('-')[1] }}
+                </button>
+              </div>
+              <div class="border border-ink-200 rounded-lg bg-white p-3 space-y-2">
+                <p class="text-sm font-medium text-ink-800">{{ activeRec.action }}</p>
+                <div class="grid grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <p class="text-2xs text-ink-500 mb-0.5">调整前</p>
+                    <p class="num text-ink-700 leading-relaxed">{{ activeRec.before }}</p>
+                  </div>
+                  <div>
+                    <p class="text-2xs text-ink-500 mb-0.5">调整后</p>
+                    <p class="num text-teal-700 font-medium leading-relaxed">{{ activeRec.after }}</p>
+                  </div>
+                </div>
+                <div class="grid grid-cols-3 gap-3 text-xs pt-1.5 border-t border-ink-100">
+                  <div>
+                    <p class="text-2xs text-ink-500 mb-0.5">影响范围</p>
+                    <p class="text-ink-700 leading-relaxed">{{ activeRec.impact }}</p>
+                  </div>
+                  <div>
+                    <p class="text-2xs text-ink-500 mb-0.5">成功标准</p>
+                    <p class="text-ink-700 leading-relaxed">{{ activeRec.successCriteria }}</p>
+                  </div>
+                  <div>
+                    <p class="text-2xs text-ink-500 mb-0.5">回滚条件</p>
+                    <p class="text-ink-700 leading-relaxed">{{ activeRec.rollbackCondition }}</p>
+                  </div>
+                </div>
+                <div class="text-xs pt-1.5 border-t border-ink-100">
+                  <p class="text-2xs text-ink-500 mb-1">观察指标</p>
+                  <div class="flex flex-wrap gap-1">
+                    <span v-for="m in activeRec.observeMetrics" :key="m" class="inline-flex items-center px-1.5 h-5 text-2xs font-medium rounded bg-ink-50 text-ink-600">{{ m }}</span>
+                  </div>
+                </div>
+              </div>
+              <p class="text-xs text-ink-500 mt-2 leading-relaxed bg-amber-50 border-l-2 border-amber-400 px-2.5 py-1.5 rounded">
+                <strong class="text-amber-600">人工边界：</strong>该方案不会修改任何真实预算或出价。批准后仅生成待执行草稿，仍需到 策略工厂 / RTA 实验 页面人工审批。
+              </p>
+            </section>
+
+            <!-- §7 技术详情（默认折叠） -->
+            <section>
+              <h3 class="text-sm font-semibold text-ink-800 tracking-tight mb-2 flex items-center gap-1.5">
+                <span class="w-1 h-3 bg-teal-500 rounded-sm"></span>07 · 人工确认与技术详情
+              </h3>
+              <button class="inline-flex items-center gap-1 text-xs font-medium text-teal-600 hover:text-teal-700" @click="toggleTechnical">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="transition-transform" :class="showTechnical ? 'rotate-90' : ''"><polyline points="9 18 15 12 9 6"/></svg>
+                {{ showTechnical ? '收起' : '展开' }}技术证据（RTAID / 实验组 / 请求 ID / 数据来源…）
+              </button>
+              <div v-if="showTechnical" class="mt-2 space-y-1.5 fadein">
+                <div class="border border-ink-200 rounded-lg p-3 space-y-1.5">
+                  <div class="flex items-baseline gap-3 text-xs"><span class="text-ink-500 w-32 shrink-0">媒体侧 RTAID</span><span class="num text-ink-800 font-medium bg-ink-50 px-1.5 py-0.5 rounded">{{ goldenReport.technical.rtaId }}</span></div>
+                  <div class="flex items-baseline gap-3 text-xs"><span class="text-ink-500 w-32 shrink-0">内部 RTA 资源 ID</span><span class="num text-ink-800 font-medium bg-ink-50 px-1.5 py-0.5 rounded">{{ goldenReport.technical.internalRtaId }}</span></div>
+                  <div class="flex items-baseline gap-3 text-xs"><span class="text-ink-500 w-32 shrink-0">实验 ID</span><span class="num text-ink-800 font-medium bg-ink-50 px-1.5 py-0.5 rounded">{{ goldenReport.technical.experimentId }}</span></div>
+                  <div class="flex items-baseline gap-3 text-xs"><span class="text-ink-500 w-32 shrink-0">对照组 ID</span><span class="num text-ink-800 font-medium bg-ink-50 px-1.5 py-0.5 rounded">{{ goldenReport.technical.controlGroupId }}</span></div>
+                  <div class="flex items-baseline gap-3 text-xs"><span class="text-ink-500 w-32 shrink-0">实验组 A ID</span><span class="num text-ink-800 font-medium bg-ink-50 px-1.5 py-0.5 rounded">{{ goldenReport.technical.treatmentGroupId }}</span></div>
+                  <div class="flex items-baseline gap-3 text-xs"><span class="text-ink-500 w-32 shrink-0">实验组 A 分桶</span><span class="num text-ink-800 font-medium bg-ink-50 px-1.5 py-0.5 rounded">[{{ goldenReport.technical.bucketIds.join(', ') }}]</span></div>
+                  <div class="flex items-baseline gap-3 text-xs"><span class="text-ink-500 w-32 shrink-0">代表请求 ID</span><span class="num text-ink-800 font-medium bg-ink-50 px-1.5 py-0.5 rounded break-all">{{ goldenReport.technical.requestId }}</span></div>
+                  <div class="flex items-baseline gap-3 text-xs"><span class="text-ink-500 w-32 shrink-0">日志字段路径</span><span class="num text-ink-800 font-medium bg-ink-50 px-1.5 py-0.5 rounded break-all">{{ goldenReport.technical.logFieldPath }}</span></div>
+                </div>
+                <div class="border border-ink-200 rounded-lg p-3">
+                  <p class="text-2xs text-ink-500 mb-1.5">配置变更前 / 后</p>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div class="bg-ink-50 rounded p-2">
+                      <p class="text-2xs text-ink-500 mb-1">变更前</p>
+                      <div v-for="(v, k) in goldenReport.technical.configBefore" :key="k" class="text-xs num text-ink-700 leading-relaxed">{{ k }} = {{ v }}</div>
+                    </div>
+                    <div class="bg-teal-50 rounded p-2">
+                      <p class="text-2xs text-teal-700 mb-1">变更后</p>
+                      <div v-for="(v, k) in goldenReport.technical.configAfter" :key="k" class="text-xs num text-teal-700 font-medium leading-relaxed">{{ k }} = {{ v }}</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="border border-ink-200 rounded-lg p-3">
+                  <div class="flex items-baseline gap-3 text-xs"><span class="text-ink-500 w-32 shrink-0">数据来源</span><span class="text-ink-700">{{ goldenReport.technical.dataSource }}</span></div>
+                  <div class="flex items-baseline gap-3 text-xs mt-1"><span class="text-ink-500 w-32 shrink-0">数据更新时间</span><span class="num text-ink-700">{{ goldenReport.technical.dataUpdatedAt }}</span></div>
+                </div>
+                <p class="text-2xs text-ink-400 px-1">注：标【待核验】字段为模拟值，真实接入前需与巨量开放平台联调确认。</p>
+              </div>
+            </section>
+
+            <!-- 术语对照 -->
+            <section class="border-t border-ink-200 pt-4">
+              <p class="text-2xs text-ink-400 mb-2">术语对照（行业黑话 ↔ 业务解释）</p>
+              <div class="grid grid-cols-2 gap-x-4 gap-y-1">
+                <div v-for="(desc, term) in glossary" :key="term" class="flex items-baseline gap-2 text-2xs leading-relaxed">
+                  <span class="text-ink-700 font-medium shrink-0">{{ term }}</span>
+                  <span class="text-ink-400">— {{ desc }}</span>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <!-- 右侧锚点导航 -->
+          <nav class="w-12 shrink-0 border-l border-ink-200 bg-ink-50/40 py-5 px-2">
+            <ol class="space-y-3 text-2xs text-ink-500 sticky top-0" style="writing-mode: vertical-rl;">
+              <li v-for="(label, idx) in ['结论','影响','原因','时间线','原因树','方案','技术']" :key="label" class="flex items-center gap-1 hover:text-ink-800 cursor-pointer">
+                <span class="num text-ink-300">{{ String(idx + 1).padStart(2, '0') }}</span>
+                <span class="font-medium">{{ label }}</span>
+              </li>
+            </ol>
+          </nav>
+        </div>
+
+        <!-- 抽屉底部 -->
+        <footer v-if="['completed','pending_execute','waiting_data'].includes(status)" class="px-5 py-3 border-t border-ink-200 bg-white shrink-0 flex items-center gap-2">
+          <div class="flex-1 text-xs text-ink-500">
+            <template v-if="status === 'completed'">请审阅方案草稿。批准后仅生成待执行草稿，不会自动修改真实配置。</template>
+            <template v-else-if="status === 'pending_execute'">等待运营人员执行配置变更。系统不会自动改写任何线上数据。</template>
+            <template v-else>预期 2 小时后系统将自动拉取数据并生成复盘报告。</template>
+          </div>
+          <button v-if="status === 'completed'" class="inline-flex items-center gap-1.5 px-3 h-8 text-sm font-medium rounded border bg-white text-ink-700 border-ink-200 hover:border-ink-300" @click="modify">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>修改方案
+          </button>
+          <button v-if="status === 'completed'" class="inline-flex items-center gap-1.5 px-3 h-8 text-sm font-medium rounded border bg-white text-rose-500 border-rose-100 hover:bg-rose-50" @click="reject">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>拒绝
+          </button>
+          <button v-if="status === 'completed'" class="inline-flex items-center gap-1.5 px-3 h-8 text-sm font-medium rounded bg-teal-600 text-white border border-teal-600 hover:bg-teal-700" @click="approve">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>批准方案
+          </button>
+          <button v-if="status === 'pending_execute'" class="inline-flex items-center gap-1.5 px-3 h-8 text-sm font-medium rounded bg-teal-600 text-white border border-teal-600 hover:bg-teal-700" @click="markExecuted">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>确认已执行，等待数据回流
+          </button>
+          <button v-if="status === 'waiting_data'" class="inline-flex items-center gap-1.5 px-3 h-8 text-sm font-medium rounded bg-teal-600 text-white border border-teal-600 hover:bg-teal-700" @click="markReviewed">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>手动完成复盘
+          </button>
+        </footer>
+      </aside>
+    </transition>
+  </div>
+  `
+}
+
+createApp(App).mount('#app')
+</script>
+
+<style>
+/* Spring 物理参数：smooth decel（skill motion-recipes 推荐） */
+.drawer-slide-enter-active, .drawer-slide-leave-active { transition: transform .32s cubic-bezier(0.16, 1, 0.3, 1), opacity .2s ease; }
+.drawer-slide-enter-from, .drawer-slide-leave-to { transform: translateX(40px); opacity: 0; }
+.fade-enter-active, .fade-leave-active { transition: opacity .2s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+/* 无障碍：尊重 prefers-reduced-motion（skill 2.6 强制规则） */
+@media (prefers-reduced-motion: reduce) {
+  .drawer-slide-enter-active, .drawer-slide-leave-active,
+  .fade-enter-active, .fade-leave-active { transition: none !important; }
+}
+</style>
+</body>
+</html>
