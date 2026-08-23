@@ -1,7 +1,7 @@
-# RTA 投放诊断 Agent · AI 产品经理作品集项目
+# RTA 投放诊断 Agent · 
 
 > 面向 RTA（实时竞价）投放优化的**受控 Agentic Workflow**：规则引擎确定性判定 → AI 语义归因/解释/规划 → 人工确认执行。
-> 这是作者投递 **AI 产品经理**岗位的作品集项目：完整 PRD + 可运行 Demo + 自动化验收 + 可评测的 AI 价值论证。
+> 完整 PRD + 可运行 Demo + 自动化验收 + 可评测的 AI 价值论证。
 
 ---
 
@@ -85,9 +85,4 @@ https://crpisynoodleeeee.github.io/rta-diagnosis-agent/
 ## ⚠️ 说明
 
 - 所有数据为 **Mock 数据（作品集演示用途）**，不包含任何真实媒体平台账户数据；
-- Demo 内的 LLM 代理仅用于演示，真实产品中应使用服务端 secret manager；
-- 部署前请自查：不要公开包含真实平台截图或任何真实 Key 的内容（见部署说明 §4）。
-
----
-
-_项目三 · 2026-08 · AI 产品经理秋招作品集_
+- Demo 内的 LLM 代理仅用于演示，真实产品中应使用服务端 secret manager
