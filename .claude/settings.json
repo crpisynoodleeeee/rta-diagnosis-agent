@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Read(//c/Users/pp678/AppData/Local/hermes/logs/**)"
-    ]
-  }
-}

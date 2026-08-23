@@ -7,7 +7,7 @@
 
 ## 🎮 在线 Demo
 
-> 🔗 **Demo 链接：`https://<你的用户名>.github.io/<仓库名>/`**（部署后替换本行）
+> 🔗 **https://github.com/crpisynoodleeeee/rta-diagnosis-agent/`**（部署后替换本行）
 > 建议 1440px 桌面视口打开；手机端会自动缩放。
 
 体验路径（3 分钟）：
@@ -70,7 +70,7 @@ node _verify.cjs; node _verify_scenes.cjs; node _verify_llm.cjs; node _verify_as
 
 ```powershell
 # 1. 在 GitHub 建仓后关联远端
-git remote add origin https://github.com/<用户名>/<仓库名>.git
+https://crpisynoodleeeee.github.io/rta-diagnosis-agent/
 
 # 2. 一键部署到 gh-pages 分支（含 demo/v6 → 仓库根）
 .\deploy-ghpages.ps1

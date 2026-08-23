@@ -19,3 +19,8 @@ dist-ssr/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Local/private materials
+.claude/
+R (2)/
+
