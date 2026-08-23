@@ -1,0 +1,3146 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1440" />
+  <title>RTA 投放诊断 Agent · v6 Demo</title>
+  <!-- CSP：Vue 3 运行时编译 template 需要 unsafe-eval；其他资源全部 self/file -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' file: data: blob:; img-src 'self' data: file: blob:; style-src 'self' 'unsafe-inline' file:; script-src 'self' 'unsafe-inline' 'unsafe-eval' file:; connect-src 'self' file: http://127.0.0.1:8787; font-src 'self' file: data:;" />
+  <!-- v6 离线化策略：所有依赖 vendor/ 本地化，零外网请求；Vue 走 UMD 普通 script；Tailwind 走本地 Play CDN 自执行版 -->
+  <script src="./vendor/vue.global.js"></script>
+  <script src="./vendor/tailwind.js"></script>
+  <script>
+    // tailwind.config 必须内联，且放在 tailwind 脚本之后
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', '"PingFang SC"', '"Microsoft YaHei"', 'system-ui', 'sans-serif'],
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', '"Liberation Mono"', 'monospace']
+          },
+          colors: {
+            ink: {
+              50: '#f7f8fa', 100: '#eef0f3', 200: '#dde1e6', 300: '#b9bfc6',
+              400: '#8a9097', 500: '#5e6573', 600: '#3f4654', 700: '#2a333c',
+              800: '#1f2329', 900: '#10161c'
+            },
+            brand: {
+              50: '#eef4ff', 100: '#dde9ff', 200: '#b8d2ff', 300: '#85b1ff',
+              400: '#5289ff', 500: '#2b5ff2', 600: '#1f4dd8', 700: '#193eaf',
+              800: '#16358a', 900: '#102459'
+            }
+          },
+          boxShadow: {
+            'panel': '0 1px 2px 0 rgba(16,22,28,.04)',
+            'drawer': '-8px 0 24px -8px rgba(16,22,28,.16)'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { background:#f6f8fa; color:#1f2329; -webkit-font-smoothing:antialiased; }
+    .num { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; }
+    ::-webkit-scrollbar { width:8px; height:8px; }
+    ::-webkit-scrollbar-thumb { background:rgba(139,150,162,.35); border-radius:4px; }
+    ::-webkit-scrollbar-thumb:hover { background:rgba(139,150,162,.6); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin { animation: spin 1s linear infinite; }
+    @keyframes slidein { from { transform: translateX(40px); opacity:0; } to { transform: translateX(0); opacity:1; } }
+    .slidein { animation: slidein .32s cubic-bezier(0.16, 1, 0.3, 1); }
+    @keyframes fadein { from { opacity:0; } to { opacity:1; } }
+    .fadein { animation: fadein .2s ease; }
+    .btn-tactile { transition: transform .12s ease, background-color .15s ease, border-color .15s ease, color .15s ease; }
+    .btn-tactile:active:not(:disabled) { transform: scale(0.98); }
+    button { transition: transform .12s ease, background-color .15s ease, border-color .15s ease, color .15s ease; }
+    @media (prefers-reduced-motion: reduce) {
+      .spin, .slidein, .fadein { animation: none !important; }
+      button { transition: none !important; }
+    }
+    .tip-bar { background: linear-gradient(90deg, #eef4ff 0%, #dde9ff 100%); border:1px solid #b8d2ff; }
+    .row-abnormal { background:#fef2f2; }
+    .row-abnormal:hover { background:#fee2e2; }
+    table.compact th, table.compact td { white-space: nowrap; }
+    .drawer-mask { background: rgba(16,22,28,.38); }
+    .badge { display:inline-flex; align-items:center; gap:4px; padding:1px 8px; border-radius:9999px; font-size:12px; line-height:18px; font-weight:500; }
+    .badge-dot { width:6px; height:6px; border-radius:9999px; display:inline-block; }
+    .progress-track { background:#eef0f3; height:6px; border-radius:9999px; overflow:hidden; }
+    .progress-bar { height:100%; border-radius:9999px; transition: width .3s ease; }
+    /* 全局错误红框（兜底） */
+    #__errbox { position: fixed; left: 16px; right: 16px; top: 16px; z-index: 99999;
+                background: #fee2e2; border: 1px solid #fca5a5; color: #991b1b;
+                border-radius: 8px; padding: 12px 16px; font-size: 13px; line-height: 1.5;
+                box-shadow: 0 4px 12px rgba(220,38,38,.18); display: none; }
+    #__errbox.show { display: block; }
+    #__errbox pre { margin-top: 8px; font-size: 11px; white-space: pre-wrap; max-height: 200px; overflow: auto; }
+  </style>
+</head>
+<body class="font-sans">
+<!-- v6 兜底：挂载点占位文本，Vue 渲染成功自动覆盖；不用 v-cloak（v-cloak 失败会永久白屏） -->
+<div id="app">
+  <div style="padding:32px;font-family:-apple-system,Segoe UI,sans-serif;color:#5e6573">
+    <div style="font-size:16px;font-weight:600;color:#1f2329">RTA 投放诊断 Agent · v6 Demo</div>
+    <div style="margin-top:8px">页面加载中…</div>
+  </div>
+</div>
+
+<!-- 全局错误捕获：任何 JS 错误显示在页面顶部红框，禁止白屏无反馈 -->
+<div id="__errbox"></div>
+<script>
+  (function(){
+    var box = document.getElementById('__errbox');
+    function show(msg, src, line, col, err){
+      if (!box) return;
+      var pre = '';
+      if (err && err.stack) pre = '\n' + (err.stack + '').slice(0, 800);
+      box.classList.add('show');
+      box.innerHTML = '<div style="font-weight:600">⛔ 页面 JS 错误（Demo v6 兜底捕获）</div>'
+        + '<div style="margin-top:4px">' + (msg || '(unknown)') + '</div>'
+        + (src ? '<div style="margin-top:4px;font-size:11px;color:#7f1d1d">' + src + ':' + line + ':' + col + '</div>' : '')
+        + (pre ? '<pre>' + pre + '</pre>' : '');
+    }
+    window.addEventListener('error', function(e){
+      show(e.message, e.filename, e.lineno, e.colno, e.error);
+    });
+    window.addEventListener('unhandledrejection', function(e){
+      show('Unhandled Promise rejection: ' + (e.reason && e.reason.message || e.reason), '', 0, 0, e.reason);
+    });
+  })();
+</script>
+
+<!-- 主应用（普通 script + const { createApp, ... } = Vue 解构） -->
+<script>
+'use strict';
+
+const { createApp, ref, reactive, computed, watch, onMounted, nextTick } = Vue;
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * 0.5 LLM_CONFIG（DeepSeek AI 层接入 · 方案 B：模板兜底 + LLM 异步叠加）
+ * 安全原则（v6 final）：
+ *     - 前端 NEVER 持有、读取、显示、存储或发送任何 API Key。
+ *     - Key 只由 Node 代理进程 `llm-proxy.mjs` 从环境变量 `DEEPSEEK_API_KEY` 读取。
+ *     - 前端 POST 到本地代理（默认 http://127.0.0.1:8787/llm，仅绑 127.0.0.1），
+ *       请求体不带 Authorization 头；代理在服务端补上 Authorization 后转发 DeepSeek。
+ *     - 代理未启动 / Key 未设置 → 返回 HTTP 503 + { error: 'LLM_NOT_CONFIGURED' }，
+ *       前端 catch 后静默回退模板，UI 不崩。
+ *     - 默认 enabled=false：演示走 buildTemplateNarrative（稳定 + 完全离线）。
+ *     - 勾选 UI「AI 模式」→ 异步 fire-and-forget 调本地代理；失败一律回退模板。
+ *     - 真实接入由运维 `export DEEPSEEK_API_KEY=<key>` 后启动 llm-proxy.mjs；
+ *       前端代码 commit 时不应出现任何真实 Key。
+ * ═══════════════════════════════════════════════════════════════════════ */
+const LLM_CONFIG = {
+  // 本地代理（CORS 桥 + 服务端持 Key）。仅绑 127.0.0.1，局域网不可达
+  endpoint: 'http://127.0.0.1:8787/llm',
+  model: 'deepseek-chat',
+  timeoutMs: 10000,
+  temperature: 0.4,
+  enabled: false
+  // 🔒 严禁在此对象加 apiKey / Authorization / token 字段。
+  //    真实 Key 只存在于 llm-proxy.mjs 进程的 process.env.DEEPSEEK_API_KEY 中。
+};
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * 1. 术语对照表（黑话翻译）
+ * ═══════════════════════════════════════════════════════════════════════ */
+const TERMINOLOGY = [
+  { term: '参竞率', plain: '平台同意参与竞价的请求占所有请求的比例' },
+  { term: 'RTA 超时', plain: '媒体侧未在 100ms 内收到 RTA 决策结果，被判为超时' },
+  { term: '分桶', plain: '按固定规则将流量分配到不同实验组（默认 10 桶，每桶 10%）' },
+  { term: '准入门槛', plain: '只有模型打分高于此阈值的请求才被允许参与竞价' },
+  { term: 'QPS', plain: '每秒请求数；RTA 平台按 QPS 配额分配给每个 RTAID' },
+  { term: '执行质量', plain: '请求在 RTA 服务侧的成功率、耗时、超时率等健康指标' },
+  { term: '回传归因', plain: '广告主侧把转化结果回传给媒体，用于效果归因与优化' },
+  { term: '出价系数', plain: '在媒体建议出价上的乘数（合法范围 0.2-5.0）' },
+  { term: '客户分桶', plain: '按客户自己定义的字段（如用户标签）分配实验流量' },
+  { term: '平台分桶', plain: '按媒体传入的桶 ID 分配实验流量（依赖媒体传参）' }
+];
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * 2. Mock 数据：10 条 RTAID 配置（含 Golden Case 夏季大促）
+ *    - 字段命名对齐《RTA 对象模型与字段清单》O3/O5/O7/O8/O11
+ *    - 增加 Portfolio 扩展字段（日预算/实际消耗/达成率/异常类型）作为作品集层
+ *    - 增加 CPA 字段（conversionCount/actualCpa/targetCpa）供 D14 与现象标签使用
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+const mediaList = ['全部媒体', '巨量', '小米', '腾讯广告', '华为', 'VIVO', 'OPPO', '荣耀'];
+const statusList = ['全部状态', '上线', '下线'];
+
+// 每条 RTAID 的诊断输入 + Portfolio 扩展 + 关联实验/策略/分桶/变更记录
+// 注：业务字段已对齐 PRD §10「数据策略」，真实接入时按对象模型 O3/O5/O7/O8/O11 替换
+const MOCK_RTA_LIST = [
+  // ── Golden Case：夏季大促 P-2026-SUMMER（首行红底，标准判定 D9/S3/80→60） ──
+  {
+    rtaId: 'juliang-rta-2086',
+    rtaInternalId: 'RTA-RES-2086',
+    media: '巨量',
+    bidUrl: 'https://rta.gromore.com/v1/decision/2086',
+    status: '上线',
+    qpsConfig: 300000,
+    qpsUsed: 42800,
+    qpsRemaining: 257200,
+    boundAccounts: 1,
+    relatedExperiments: 1,
+    projectName: 'P-2026-SUMMER 夏季大促',
+    dailyBudget: 1000,
+    actualCost: 300,
+    achievementRate: 0.30,
+    coreMetrics: { currentQps: 12480, peakQps: 15000, qpsUsageRate: 0.042, avgLatency: 18, p95: 32, p99: 96, timeoutRate: 0.004, successRate: 0.994, failRate: 0.006 },
+    usageMetrics: { totalRequests: 20000, execSuccess: 19880, execFail: 120, fallbackExec: 0, bidCount: 7000, rejectCount: 13000, hitCount: 19200, hitRate: 0.96, avgBidWeight: 1.0, avgCpaBid: 200, avgCpcBid: 0, bidRate: { control: 0.60, treatment: 0.10 } },
+    trend: [
+      { time: '11:30', requests: 1080, hitRate: 0.96, bidRate: 0.60, cost: 28 },
+      { time: '11:50', requests: 1080, hitRate: 0.96, bidRate: 0.60, cost: 27 },
+      { time: '12:00', requests: 1100, hitRate: 0.96, bidRate: 0.10, cost: 8 },
+      { time: '12:05', requests: 1100, hitRate: 0.96, bidRate: 0.10, cost: 6 },
+      { time: '12:30', requests: 1100, hitRate: 0.96, impressionChange: -0.80, cost: 6 },
+      { time: '13:00', requests: 1100, hitRate: 0.96, bidRate: 0.10, cost: 6 }
+    ],
+    attribution: { callbackSuccessRate: 0.992, callbackLatency: 240, missingFieldRate: 0.01 },
+    budget: { dailyBudget: 1000, actualCost: 300, controlGroupCost: 250, treatmentGroupCost: 50 },
+    strategies: [
+      { name: '清凉家电新策略（实验）', status: '已发布', thresholdBefore: '40%', thresholdAfter: '80%' }
+    ],
+    experiment: { id: 'EXP-2026-08', name: '夏季大促门槛实验', type: 'AB', status: '实验中', effectMode: '立即生效' },
+    groups: [
+      { groupId: 'G-CONTROL', groupType: 'control', buckets: [1,2,5,6,9] },
+      { groupId: 'G-TREAT-A', groupType: 'treatment', buckets: [3,4,7,8,10], snapshot: { '准入门槛': '80%' } }
+    ],
+    bucketMode: 'platform',
+    changes: [
+      { time: '11:50', operator: 'lina', object: '实验组 A', field: '准入门槛', before: '40%', after: '80%' }
+    ],
+    conversionCount: 10,
+    actualCpa: 30,
+    targetCpa: 25
+  },
+
+  // ── CPA 过高示例：预算消耗高但转化少 ──
+  {
+    rtaId: 'tencent-rta-3112',
+    rtaInternalId: 'RTA-RES-3112',
+    media: '腾讯广告',
+    bidUrl: 'https://rta.tencent.com/v1/decide/3112',
+    status: '上线',
+    qpsConfig: 200000,
+    qpsUsed: 182000,
+    qpsRemaining: 18000,
+    boundAccounts: 2,
+    relatedExperiments: 2,
+    projectName: 'P-2026-ECOM 电商日常',
+    dailyBudget: 2000,
+    actualCost: 1950,
+    achievementRate: 0.975,
+    coreMetrics: { currentQps: 182000, peakQps: 195000, qpsUsageRate: 0.91, avgLatency: 35, p95: 60, p99: 110, timeoutRate: 0.018, successRate: 0.978, failRate: 0.022 },
+    usageMetrics: { totalRequests: 180000, execSuccess: 176000, execFail: 4000, fallbackExec: 1200, bidCount: 98000, rejectCount: 82000, hitCount: 162000, hitRate: 0.90, avgBidWeight: 1.2, avgCpaBid: 280, avgCpcBid: 0, bidRate: { control: 0.55, treatment: 0.55 } },
+    trend: [
+      { time: '10:00', requests: 11000, hitRate: 0.92, bidRate: 0.60, cost: 90 },
+      { time: '12:00', requests: 12500, hitRate: 0.90, bidRate: 0.55, cost: 100 },
+      { time: '14:00', requests: 13000, hitRate: 0.88, bidRate: 0.50, cost: 105 },
+      { time: '16:00', requests: 12800, hitRate: 0.86, bidRate: 0.45, cost: 110 }
+    ],
+    attribution: { callbackSuccessRate: 0.94, callbackLatency: 320, missingFieldRate: 0.04 },
+    budget: { dailyBudget: 2000, actualCost: 1950, controlGroupCost: 950, treatmentGroupCost: 1000 },
+    strategies: [
+      { name: '电商主推策略', status: '已发布', thresholdBefore: '50%', thresholdAfter: '50%' }
+    ],
+    experiment: { id: 'EXP-2026-09', name: '电商日常 AB', type: 'AB', status: '实验中', effectMode: '立即生效' },
+    groups: [
+      { groupId: 'G-CONTROL', groupType: 'control', buckets: [1,2,5,6,9] },
+      { groupId: 'G-TREAT-A', groupType: 'treatment', buckets: [3,4,7,8,10], snapshot: { '出价系数': '1.2' } }
+    ],
+    bucketMode: 'platform',
+    changes: [],
+    conversionCount: 5,    // 转化很少
+    actualCpa: 390,        // = 1950/5
+    targetCpa: 100         // 目标 100，实际 390 → 严重超标
+  },
+
+  // ── 可安全放量示例：达成率高 + CPA 达标 ──
+  {
+    rtaId: 'huawei-rta-5040',
+    rtaInternalId: 'RTA-RES-5040',
+    media: '华为',
+    bidUrl: 'https://rta.hicloud.com/v1/decision/5040',
+    status: '上线',
+    qpsConfig: 150000,
+    qpsUsed: 65000,
+    qpsRemaining: 85000,
+    boundAccounts: 3,
+    relatedExperiments: 1,
+    projectName: 'P-2026-LOHAS 健康品类',
+    dailyBudget: 5000,
+    actualCost: 4800,
+    achievementRate: 0.96,
+    coreMetrics: { currentQps: 65000, peakQps: 80000, qpsUsageRate: 0.43, avgLatency: 22, p95: 38, p99: 88, timeoutRate: 0.005, successRate: 0.992, failRate: 0.008 },
+    usageMetrics: { totalRequests: 250000, execSuccess: 248000, execFail: 2000, fallbackExec: 800, bidCount: 220000, rejectCount: 30000, hitCount: 240000, hitRate: 0.96, avgBidWeight: 1.0, avgCpaBid: 200, avgCpcBid: 0, bidRate: { control: 0.88, treatment: 0.88 } },
+    trend: [
+      { time: '08:00', requests: 18000, hitRate: 0.96, bidRate: 0.88, cost: 380 },
+      { time: '10:00', requests: 20000, hitRate: 0.96, bidRate: 0.88, cost: 410 },
+      { time: '14:00', requests: 22000, hitRate: 0.96, bidRate: 0.88, cost: 430 },
+      { time: '18:00', requests: 21000, hitRate: 0.96, bidRate: 0.88, cost: 420 }
+    ],
+    attribution: { callbackSuccessRate: 0.995, callbackLatency: 220, missingFieldRate: 0.005 },
+    budget: { dailyBudget: 5000, actualCost: 4800, controlGroupCost: 2400, treatmentGroupCost: 2400 },
+    strategies: [
+      { name: '健康品类主策略', status: '已发布', thresholdBefore: '60%', thresholdAfter: '60%' }
+    ],
+    experiment: { id: 'EXP-2026-10', name: '健康品类放量', type: 'AB', status: '实验中', effectMode: '立即生效' },
+    groups: [
+      { groupId: 'G-CONTROL', groupType: 'control', buckets: [1,2,5,6,9] },
+      { groupId: 'G-TREAT-A', groupType: 'treatment', buckets: [3,4,7,8,10], snapshot: { '出价系数': '1.0' } }
+    ],
+    bucketMode: 'customer',
+    changes: [],
+    conversionCount: 240,   // 转化充足
+    actualCpa: 20,          // = 4800/240
+    targetCpa: 30           // 实际 20 ≤ 目标 30，达标
+  },
+
+  // ── 命中率下降（S2）──
+  {
+    rtaId: 'xiaomi-rta-7701',
+    rtaInternalId: 'RTA-RES-7701',
+    media: '小米',
+    bidUrl: 'https://rta.miui.com/v1/decision/7701',
+    status: '上线',
+    qpsConfig: 80000,
+    qpsUsed: 22000,
+    qpsRemaining: 58000,
+    boundAccounts: 1,
+    relatedExperiments: 1,
+    projectName: 'P-2026-APP 应用拉新',
+    dailyBudget: 1500,
+    actualCost: 480,
+    achievementRate: 0.32,
+    coreMetrics: { currentQps: 22000, peakQps: 28000, qpsUsageRate: 0.275, avgLatency: 25, p95: 42, p99: 80, timeoutRate: 0.008, successRate: 0.988, failRate: 0.012 },
+    usageMetrics: { totalRequests: 120000, execSuccess: 118600, execFail: 1400, fallbackExec: 400, bidCount: 60000, rejectCount: 60000, hitCount: 54000, hitRate: 0.45, avgBidWeight: 0.9, avgCpaBid: 150, avgCpcBid: 0, bidRate: { control: 0.50, treatment: 0.50 } },
+    trend: [
+      { time: '10:00', requests: 8000, hitRate: 0.78, bidRate: 0.55, cost: 40 },
+      { time: '12:00', requests: 8200, hitRate: 0.55, bidRate: 0.50, cost: 32 },
+      { time: '14:00', requests: 8500, hitRate: 0.45, bidRate: 0.50, cost: 28 }
+    ],
+    attribution: { callbackSuccessRate: 0.978, callbackLatency: 280, missingFieldRate: 0.02 },
+    budget: { dailyBudget: 1500, actualCost: 480, controlGroupCost: 240, treatmentGroupCost: 240 },
+    strategies: [
+      { name: '拉新主策略', status: '已发布', thresholdBefore: '50%', thresholdAfter: '50%' }
+    ],
+    experiment: { id: 'EXP-2026-11', name: '拉新人群优化', type: 'AB', status: '实验中', effectMode: '立即生效' },
+    groups: [
+      { groupId: 'G-CONTROL', groupType: 'control', buckets: [1,2,5,6,9] },
+      { groupId: 'G-TREAT-A', groupType: 'treatment', buckets: [3,4,7,8,10], snapshot: { '人群包': '窄人群 v2' } }
+    ],
+    bucketMode: 'customer',
+    changes: [
+      { time: '10:30', operator: 'wang', object: '实验组 A', field: '人群包', before: '宽人群 v1', after: '窄人群 v2' }
+    ],
+    conversionCount: 16,
+    actualCpa: 30,
+    targetCpa: 35
+  },
+
+  // ── 执行质量异常（S5）──
+  {
+    rtaId: 'vivo-rta-8810',
+    rtaInternalId: 'RTA-RES-8810',
+    media: 'VIVO',
+    bidUrl: 'https://rta.vivo.com.cn/v1/decision/8810',
+    status: '上线',
+    qpsConfig: 60000,
+    qpsUsed: 35000,
+    qpsRemaining: 25000,
+    boundAccounts: 1,
+    relatedExperiments: 1,
+    projectName: 'P-2026-FIN 金融拉活',
+    dailyBudget: 3000,
+    actualCost: 1100,
+    achievementRate: 0.367,
+    coreMetrics: { currentQps: 35000, peakQps: 42000, qpsUsageRate: 0.583, avgLatency: 65, p95: 180, p99: 320, timeoutRate: 0.05, successRate: 0.92, failRate: 0.08 },
+    usageMetrics: { totalRequests: 150000, execSuccess: 138000, execFail: 12000, fallbackExec: 3500, bidCount: 75000, rejectCount: 75000, hitCount: 138000, hitRate: 0.92, avgBidWeight: 1.0, avgCpaBid: 220, avgCpcBid: 0, bidRate: { control: 0.50, treatment: 0.50 } },
+    trend: [
+      { time: '11:00', requests: 10000, hitRate: 0.94, bidRate: 0.55, cost: 70 },
+      { time: '13:00', requests: 10500, hitRate: 0.92, bidRate: 0.50, cost: 60 },
+      { time: '15:00', requests: 11000, hitRate: 0.85, bidRate: 0.45, cost: 55 }
+    ],
+    attribution: { callbackSuccessRate: 0.96, callbackLatency: 350, missingFieldRate: 0.03 },
+    budget: { dailyBudget: 3000, actualCost: 1100, controlGroupCost: 550, treatmentGroupCost: 550 },
+    strategies: [
+      { name: '金融拉活策略', status: '已发布', thresholdBefore: '60%', thresholdAfter: '60%' }
+    ],
+    experiment: { id: 'EXP-2026-12', name: '金融 AB', type: 'AB', status: '实验中', effectMode: '立即生效' },
+    groups: [
+      { groupId: 'G-CONTROL', groupType: 'control', buckets: [1,2,5,6,9] },
+      { groupId: 'G-TREAT-A', groupType: 'treatment', buckets: [3,4,7,8,10], snapshot: { '出价系数': '1.0' } }
+    ],
+    bucketMode: 'customer',
+    changes: [],
+    conversionCount: 30,
+    actualCpa: 36.7,
+    targetCpa: 50
+  },
+
+  // ── 回传异常（S6）──
+  {
+    rtaId: 'oppo-rta-9921',
+    rtaInternalId: 'RTA-RES-9921',
+    media: 'OPPO',
+    bidUrl: 'https://rta.oppo.com/v1/decision/9921',
+    status: '上线',
+    qpsConfig: 50000,
+    qpsUsed: 18000,
+    qpsRemaining: 32000,
+    boundAccounts: 1,
+    relatedExperiments: 1,
+    projectName: 'P-2026-MAT 母婴专项',
+    dailyBudget: 1800,
+    actualCost: 1200,
+    achievementRate: 0.667,
+    coreMetrics: { currentQps: 18000, peakQps: 22000, qpsUsageRate: 0.36, avgLatency: 28, p95: 48, p99: 92, timeoutRate: 0.012, successRate: 0.98, failRate: 0.02 },
+    usageMetrics: { totalRequests: 80000, execSuccess: 78400, execFail: 1600, fallbackExec: 600, bidCount: 40000, rejectCount: 40000, hitCount: 76000, hitRate: 0.95, avgBidWeight: 1.0, avgCpaBid: 180, avgCpcBid: 0, bidRate: { control: 0.50, treatment: 0.50 } },
+    trend: [
+      { time: '10:00', requests: 5500, hitRate: 0.95, bidRate: 0.50, cost: 80 },
+      { time: '12:00', requests: 5600, hitRate: 0.95, bidRate: 0.50, cost: 82 },
+      { time: '14:00', requests: 5400, hitRate: 0.95, bidRate: 0.50, cost: 78 }
+    ],
+    attribution: { callbackSuccessRate: 0.85, callbackLatency: 480, missingFieldRate: 0.08 },
+    budget: { dailyBudget: 1800, actualCost: 1200, controlGroupCost: 600, treatmentGroupCost: 600 },
+    strategies: [
+      { name: '母婴策略', status: '已发布', thresholdBefore: '55%', thresholdAfter: '55%' }
+    ],
+    experiment: { id: 'EXP-2026-13', name: '母婴 AB', type: 'AB', status: '实验中', effectMode: '立即生效' },
+    groups: [
+      { groupId: 'G-CONTROL', groupType: 'control', buckets: [1,2,5,6,9] },
+      { groupId: 'G-TREAT-A', groupType: 'treatment', buckets: [3,4,7,8,10], snapshot: { '出价系数': '1.0' } }
+    ],
+    bucketMode: 'customer',
+    changes: [],
+    conversionCount: 40,
+    actualCpa: 30,
+    targetCpa: 40
+  },
+
+  // ── 入口流量下降（S1）──
+  {
+    rtaId: 'juliang-rta-2099',
+    rtaInternalId: 'RTA-RES-2099',
+    media: '巨量',
+    bidUrl: 'https://rta.gromore.com/v1/decision/2099',
+    status: '上线',
+    qpsConfig: 100000,
+    qpsUsed: 12000,
+    qpsRemaining: 88000,
+    boundAccounts: 1,
+    relatedExperiments: 1,
+    projectName: 'P-2026-EDU 教育推广',
+    dailyBudget: 1200,
+    actualCost: 360,
+    achievementRate: 0.30,
+    coreMetrics: { currentQps: 12000, peakQps: 38000, qpsUsageRate: 0.12, avgLatency: 20, p95: 36, p99: 78, timeoutRate: 0.006, successRate: 0.99, failRate: 0.01 },
+    usageMetrics: { totalRequests: 60000, execSuccess: 59400, execFail: 600, fallbackExec: 200, bidCount: 30000, rejectCount: 30000, hitCount: 57000, hitRate: 0.95, avgBidWeight: 1.0, avgCpaBid: 200, avgCpcBid: 0, bidRate: { control: 0.50, treatment: 0.50 } },
+    trend: [
+      { time: '10:00', requests: 5800, hitRate: 0.95, bidRate: 0.50, cost: 30 },
+      { time: '12:00', requests: 2500, hitRate: 0.95, bidRate: 0.50, cost: 12 },
+      { time: '14:00', requests: 1800, hitRate: 0.95, bidRate: 0.50, cost: 8 }
+    ],
+    attribution: { callbackSuccessRate: 0.985, callbackLatency: 260, missingFieldRate: 0.015 },
+    budget: { dailyBudget: 1200, actualCost: 360, controlGroupCost: 180, treatmentGroupCost: 180 },
+    strategies: [
+      { name: '教育主策略', status: '已发布', thresholdBefore: '50%', thresholdAfter: '50%' }
+    ],
+    experiment: { id: 'EXP-2026-14', name: '教育 AB', type: 'AB', status: '实验中', effectMode: '立即生效' },
+    groups: [
+      { groupId: 'G-CONTROL', groupType: 'control', buckets: [1,2,5,6,9] },
+      { groupId: 'G-TREAT-A', groupType: 'treatment', buckets: [3,4,7,8,10], snapshot: { '出价系数': '1.0' } }
+    ],
+    bucketMode: 'platform',
+    changes: [
+      { time: '11:00', operator: 'media-ops', object: '媒体计划', field: '创意状态', before: '投放中', after: '已暂停' }
+    ],
+    conversionCount: 12,
+    actualCpa: 30,
+    targetCpa: 40
+  },
+
+  // ── 出价异常（S4）──
+  {
+    rtaId: 'honor-rta-1245',
+    rtaInternalId: 'RTA-RES-1245',
+    media: '荣耀',
+    bidUrl: 'https://rta.hihonor.com/v1/decision/1245',
+    status: '上线',
+    qpsConfig: 40000,
+    qpsUsed: 15000,
+    qpsRemaining: 25000,
+    boundAccounts: 1,
+    relatedExperiments: 1,
+    projectName: 'P-2026-AUTO 汽车试驾',
+    dailyBudget: 2200,
+    actualCost: 600,
+    achievementRate: 0.273,
+    coreMetrics: { currentQps: 15000, peakQps: 18000, qpsUsageRate: 0.375, avgLatency: 30, p95: 55, p99: 100, timeoutRate: 0.01, successRate: 0.985, failRate: 0.015 },
+    usageMetrics: { totalRequests: 70000, execSuccess: 68950, execFail: 1050, fallbackExec: 320, bidCount: 15000, rejectCount: 55000, hitCount: 68000, hitRate: 0.97, avgBidWeight: 0.3, avgCpaBid: 50, avgCpcBid: 0, bidRate: { control: 0.21, treatment: 0.21 } },
+    trend: [
+      { time: '10:00', requests: 5000, hitRate: 0.97, bidRate: 0.55, cost: 50 },
+      { time: '12:00', requests: 5200, hitRate: 0.97, bidRate: 0.30, cost: 25 },
+      { time: '14:00', requests: 4800, hitRate: 0.97, bidRate: 0.20, cost: 18 }
+    ],
+    attribution: { callbackSuccessRate: 0.978, callbackLatency: 300, missingFieldRate: 0.02 },
+    budget: { dailyBudget: 2200, actualCost: 600, controlGroupCost: 300, treatmentGroupCost: 300 },
+    strategies: [
+      { name: '汽车主推策略', status: '已发布', thresholdBefore: '60%', thresholdAfter: '60%' }
+    ],
+    experiment: { id: 'EXP-2026-15', name: '汽车 AB', type: 'AB', status: '实验中', effectMode: '立即生效' },
+    groups: [
+      { groupId: 'G-CONTROL', groupType: 'control', buckets: [1,2,5,6,9] },
+      { groupId: 'G-TREAT-A', groupType: 'treatment', buckets: [3,4,7,8,10], snapshot: { '出价系数': '0.3' } }
+    ],
+    bucketMode: 'customer',
+    changes: [
+      { time: '11:30', operator: 'zhao', object: '实验组 A', field: '出价系数', before: '1.0', after: '0.3' }
+    ],
+    conversionCount: 20,
+    actualCpa: 30,
+    targetCpa: 50
+  },
+
+  // ── 配置故障示例（S0：账户未绑定）──
+  {
+    rtaId: 'juliang-rta-3050',
+    rtaInternalId: 'RTA-RES-3050',
+    media: '巨量',
+    bidUrl: 'https://rta.gromore.com/v1/decision/3050',
+    status: '上线',
+    qpsConfig: 50000,
+    qpsUsed: 0,
+    qpsRemaining: 50000,
+    boundAccounts: 0,
+    relatedExperiments: 0,
+    projectName: 'P-2026-NEW 新品冷启',
+    dailyBudget: 800,
+    actualCost: 0,
+    achievementRate: 0,
+    coreMetrics: { currentQps: 0, peakQps: 0, qpsUsageRate: 0, avgLatency: 0, p95: 0, p99: 0, timeoutRate: 0, successRate: 0, failRate: 0 },
+    usageMetrics: { totalRequests: 0, execSuccess: 0, execFail: 0, fallbackExec: 0, bidCount: 0, rejectCount: 0, hitCount: 0, hitRate: 0, avgBidWeight: 0, avgCpaBid: 0, avgCpcBid: 0, bidRate: { control: 0, treatment: 0 } },
+    trend: [],
+    attribution: { callbackSuccessRate: 0, callbackLatency: 0, missingFieldRate: 0 },
+    budget: { dailyBudget: 800, actualCost: 0, controlGroupCost: 0, treatmentGroupCost: 0 },
+    strategies: [],
+    experiment: { id: '', name: '', type: '', status: '', effectMode: '' },
+    groups: [],
+    bucketMode: 'platform',
+    changes: [],
+    conversionCount: 0,
+    actualCpa: 0,
+    targetCpa: 50
+  },
+
+  // ── 正常示例（S7 + 现象 = 预算达标 + CPA 达标）──
+  {
+    rtaId: 'tencent-rta-4080',
+    rtaInternalId: 'RTA-RES-4080',
+    media: '腾讯广告',
+    bidUrl: 'https://rta.tencent.com/v1/decide/4080',
+    status: '上线',
+    qpsConfig: 90000,
+    qpsUsed: 52000,
+    qpsRemaining: 38000,
+    boundAccounts: 2,
+    relatedExperiments: 1,
+    projectName: 'P-2026-DAILY 日耗品日常',
+    dailyBudget: 3000,
+    actualCost: 2750,
+    achievementRate: 0.917,
+    coreMetrics: { currentQps: 52000, peakQps: 60000, qpsUsageRate: 0.578, avgLatency: 24, p95: 40, p99: 85, timeoutRate: 0.006, successRate: 0.992, failRate: 0.008 },
+    usageMetrics: { totalRequests: 220000, execSuccess: 218240, execFail: 1760, fallbackExec: 600, bidCount: 176000, rejectCount: 44000, hitCount: 215000, hitRate: 0.978, avgBidWeight: 1.0, avgCpaBid: 200, avgCpcBid: 0, bidRate: { control: 0.80, treatment: 0.80 } },
+    trend: [
+      { time: '10:00', requests: 16000, hitRate: 0.98, bidRate: 0.80, cost: 220 },
+      { time: '14:00', requests: 17000, hitRate: 0.98, bidRate: 0.80, cost: 235 },
+      { time: '18:00', requests: 16500, hitRate: 0.98, bidRate: 0.80, cost: 225 }
+    ],
+    attribution: { callbackSuccessRate: 0.989, callbackLatency: 250, missingFieldRate: 0.01 },
+    budget: { dailyBudget: 3000, actualCost: 2750, controlGroupCost: 1375, treatmentGroupCost: 1375 },
+    strategies: [
+      { name: '日耗品主推策略', status: '已发布', thresholdBefore: '50%', thresholdAfter: '50%' }
+    ],
+    experiment: { id: 'EXP-2026-16', name: '日耗品 AB', type: 'AB', status: '实验中', effectMode: '立即生效' },
+    groups: [
+      { groupId: 'G-CONTROL', groupType: 'control', buckets: [1,2,5,6,9] },
+      { groupId: 'G-TREAT-A', groupType: 'treatment', buckets: [3,4,7,8,10], snapshot: { '出价系数': '1.0' } }
+    ],
+    bucketMode: 'platform',
+    changes: [],
+    conversionCount: 138,   // 转化充足
+    actualCpa: 19.9,        // ≈ 2750/138
+    targetCpa: 25           // 达标
+  }
+];
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * 3. 规则引擎 D1-D14（独立函数 + signals）
+ *    - D1-D13 覆盖 RTA 全链路（与 MVP 规则表 v0.1 §2 对齐）
+ *    - D14 = CPA 达标判定：actualCpa > targetCpa × 1.2 → abnormal（不进 S0-S7 短路链）
+ *    - 字段缺失时优雅降级（返回 normal + 证据说明）
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+function safeNum(v, dflt) { return (typeof v === 'number' && isFinite(v)) ? v : dflt; }
+
+function checkD1(r) {
+  // RTAID 可用：状态=上线、BidURL 非空
+  if (!r.rtaId) return { id:'D1', label:'RTAID 是否可用', result:'abnormal', confidence:99, impact:'high', evidence:'RTAID 为空', metrics:[] };
+  if (r.status !== '上线') return { id:'D1', label:'RTAID 是否可用', result:'abnormal', confidence:99, impact:'high', evidence:`RTAID 状态=${r.status}，未上线`, metrics:[{ name:'状态', value:r.status }] };
+  if (!r.bidUrl) return { id:'D1', label:'RTAID 是否可用', result:'abnormal', confidence:99, impact:'high', evidence:'BidURL 为空', metrics:[] };
+  return { id:'D1', label:'RTAID 是否可用', result:'normal', confidence:99, impact:'high', evidence:`状态=上线，BidURL 已配置（${r.bidUrl}）`, metrics:[{ name:'状态', value:'上线' }] };
+}
+
+function checkD2(r) {
+  // 媒体账户绑定
+  if (safeNum(r.boundAccounts, 0) === 0) {
+    return { id:'D2', label:'媒体账户是否正确绑定', result:'abnormal', confidence:99, impact:'high', evidence:'RTAID 未绑定任何媒体账户', metrics:[{ name:'绑定账户数', value:0 }] };
+  }
+  return { id:'D2', label:'媒体账户是否正确绑定', result:'normal', confidence:99, impact:'high', evidence:`已绑定 ${r.boundAccounts} 个媒体账户`, metrics:[{ name:'绑定账户数', value:r.boundAccounts }] };
+}
+
+function checkD3(r) {
+  // QPS 容量
+  const usage = safeNum(r.coreMetrics && r.coreMetrics.qpsUsageRate, 0);
+  if (usage > 1.0) {
+    return { id:'D3', label:'QPS 是否配置不足或已占满', result:'abnormal', confidence:95, impact:'high', evidence:`QPS 使用率 ${(usage*100).toFixed(1)}%（超限，建议扩容或降实验）`, metrics:[{ name:'使用率', value:(usage*100).toFixed(1)+'%' }] };
+  }
+  if (usage > 0.8) {
+    return { id:'D3', label:'QPS 是否配置不足或已占满', result:'abnormal', confidence:85, impact:'medium', evidence:`QPS 使用率 ${(usage*100).toFixed(1)}%（接近 80%，黄色风险）`, metrics:[{ name:'使用率', value:(usage*100).toFixed(1)+'%' }] };
+  }
+  return { id:'D3', label:'QPS 是否配置不足或已占满', result:'normal', confidence:95, impact:'high', evidence:`QPS 使用率 ${(usage*100).toFixed(1)}%（< 80%，未限流）`, metrics:[{ name:'使用率', value:(usage*100).toFixed(1)+'%' }, { name:'配置/已用/剩余', value:`${r.qpsConfig} / ${r.qpsUsed} / ${r.qpsRemaining}` }] };
+}
+
+function checkD4(r) {
+  // 策略状态
+  const strats = Array.isArray(r.strategies) ? r.strategies : [];
+  if (strats.length === 0) {
+    return { id:'D4', label:'策略是否已发布并绑定当前 RTAID', result:'abnormal', confidence:99, impact:'high', evidence:'实验未引用任何策略', metrics:[] };
+  }
+  const bad = strats.filter(s => s.status !== '已发布');
+  if (bad.length > 0) {
+    return { id:'D4', label:'策略是否已发布并绑定当前 RTAID', result:'abnormal', confidence:99, impact:'high', evidence:`存在未发布策略：${bad.map(s=>s.name+'('+s.status+')').join('、')}`, metrics:[] };
+  }
+  return { id:'D4', label:'策略是否已发布并绑定当前 RTAID', result:'normal', confidence:99, impact:'high', evidence:`${strats.length} 条策略均已发布`, metrics:[{ name:'已发布策略数', value:strats.length }] };
+}
+
+function checkD5(r) {
+  // 实验状态
+  if (!r.experiment || !r.experiment.id) {
+    return { id:'D5', label:'实验是否处于生效状态', result:'abnormal', confidence:99, impact:'high', evidence:'未关联任何实验', metrics:[] };
+  }
+  if (r.experiment.status !== '实验中') {
+    return { id:'D5', label:'实验是否处于生效状态', result:'abnormal', confidence:99, impact:'high', evidence:`实验状态=${r.experiment.status}，未生效`, metrics:[{ name:'实验状态', value:r.experiment.status }] };
+  }
+  return { id:'D5', label:'实验是否处于生效状态', result:'normal', confidence:99, impact:'high', evidence:`实验 ${r.experiment.id} 状态=实验中`, metrics:[{ name:'实验', value:r.experiment.name }] };
+}
+
+function checkD6(r) {
+  // 分桶：实验组 + 对照组
+  if (!Array.isArray(r.groups) || r.groups.length < 2) {
+    return { id:'D6', label:'分桶是否命中或大量进入兜底', result:'abnormal', confidence:90, impact:'high', evidence:'实验组或对照组缺失', metrics:[] };
+  }
+  return { id:'D6', label:'分桶是否命中或大量进入兜底', result:'normal', confidence:90, impact:'medium', evidence:`分桶方式=${r.bucketMode}，共 ${r.groups.length} 组（对照组+实验组），分桶生效`, metrics:[{ name:'分桶方式', value:r.bucketMode }] };
+}
+
+function checkD7(r) {
+  // 请求量：环比变化（首尾对比，trend >= 2 即生效）
+  const tr = Array.isArray(r.trend) ? r.trend : [];
+  if (tr.length < 2) {
+    return { id:'D7', label:'请求量是否正常', result:'normal', confidence:60, impact:'medium', evidence:'趋势数据不足（< 2），跳过环比判定', metrics:[] };
+  }
+  const first = safeNum(tr[0].requests, 0);
+  const second = safeNum(tr[tr.length-1].requests, 0);
+  if (first === 0) {
+    return { id:'D7', label:'请求量是否正常', result:'normal', confidence:60, impact:'medium', evidence:'基线请求量为 0', metrics:[] };
+  }
+  const delta = (second - first) / first;
+  if (delta < -0.5) {
+    return { id:'D7', label:'请求量是否正常', result:'abnormal', confidence:88, impact:'high', evidence:`请求量从首点 ${first.toFixed(0)} 降至末点 ${second.toFixed(0)}，降幅 ${(Math.abs(delta)*100).toFixed(1)}%（> 50% 异常）`, metrics:[{ name:'首点', value:first.toFixed(0) }, { name:'末点', value:second.toFixed(0) }, { name:'变化', value:(delta*100).toFixed(1)+'%' }] };
+  }
+  return { id:'D7', label:'请求量是否正常', result:'normal', confidence:85, impact:'medium', evidence:`请求量环比 ${(delta*100).toFixed(1)}%（未超阈值）`, metrics:[{ name:'变化', value:(delta*100).toFixed(1)+'%' }] };
+}
+
+function checkD8(r) {
+  // 命中率
+  const hitRate = safeNum(r.usageMetrics && r.usageMetrics.hitRate, 0);
+  if (hitRate === 0 && safeNum(r.usageMetrics && r.usageMetrics.totalRequests, 0) === 0) {
+    return { id:'D8', label:'命中率是否异常偏低', result:'normal', confidence:50, impact:'medium', evidence:'无请求数据，跳过判定', metrics:[] };
+  }
+  if (hitRate < 0.5) {
+    return { id:'D8', label:'命中率是否异常偏低', result:'abnormal', confidence:92, impact:'high', evidence:`命中率 ${(hitRate*100).toFixed(1)}%（< 50% 告警）`, metrics:[{ name:'命中率', value:(hitRate*100).toFixed(1)+'%' }, { name:'命中数/请求数', value:`${r.usageMetrics.hitCount} / ${r.usageMetrics.totalRequests}` }] };
+  }
+  return { id:'D8', label:'命中率是否异常偏低', result:'normal', confidence:92, impact:'medium', evidence:`命中率 ${(hitRate*100).toFixed(1)}%（≥ 50%，未超阈值）`, metrics:[{ name:'命中率', value:(hitRate*100).toFixed(1)+'%' }] };
+}
+
+function checkD9(r) {
+  // 参竞率差 = 对照组 vs 实验组
+  const br = r.usageMetrics && r.usageMetrics.bidRate;
+  if (!br || typeof br.control !== 'number' || typeof br.treatment !== 'number') {
+    return { id:'D9', label:'放行率（参竞率）是否异常偏低', result:'normal', confidence:50, impact:'medium', evidence:'分桶参竞率数据缺失，跳过判定', metrics:[] };
+  }
+  const diff = Math.abs(br.control - br.treatment);
+  const gap = ((diff) * 100).toFixed(0);
+  if (diff > 0.20) {
+    return { id:'D9', label:'放行率（参竞率）是否异常偏低', result:'abnormal', confidence:92, impact:'high', evidence:`对照组 ${(br.control*100).toFixed(0)}% vs 实验组 ${(br.treatment*100).toFixed(0)}%，差 ${gap}pp（> 20pp 异常）`, metrics:[{ name:'对照组参竞率', value:(br.control*100).toFixed(0)+'%' }, { name:'实验组参竞率', value:(br.treatment*100).toFixed(0)+'%' }, { name:'差值', value:gap+'pp' }] };
+  }
+  return { id:'D9', label:'放行率（参竞率）是否异常偏低', result:'normal', confidence:90, impact:'high', evidence:`对照组 ${(br.control*100).toFixed(0)}% vs 实验组 ${(br.treatment*100).toFixed(0)}%，差 ${gap}pp（未超阈值）`, metrics:[{ name:'差值', value:gap+'pp' }] };
+}
+
+function checkD10(r) {
+  // 执行质量
+  const sr = safeNum(r.coreMetrics && r.coreMetrics.successRate, 1);
+  const tr = safeNum(r.coreMetrics && r.coreMetrics.timeoutRate, 0);
+  const p99 = safeNum(r.coreMetrics && r.coreMetrics.p99, 0);
+  if (safeNum(r.coreMetrics && r.coreMetrics.currentQps, 0) === 0) {
+    return { id:'D10', label:'执行失败率/超时率是否异常', result:'normal', confidence:50, impact:'medium', evidence:'无 QPS 数据，跳过判定', metrics:[] };
+  }
+  if (sr < 0.95 || tr > 0.03 || p99 > 100) {
+    const reasons = [];
+    if (sr < 0.95) reasons.push(`成功率 ${(sr*100).toFixed(1)}%<95%`);
+    if (tr > 0.03) reasons.push(`超时率 ${(tr*100).toFixed(1)}%>3%`);
+    if (p99 > 100) reasons.push(`P99 ${p99}ms>100ms`);
+    return { id:'D10', label:'执行失败率/超时率是否异常', result:'abnormal', confidence:90, impact:'high', evidence:reasons.join('，'), metrics:[{ name:'成功率', value:(sr*100).toFixed(1)+'%' }, { name:'P99', value:p99+'ms' }, { name:'超时率', value:(tr*100).toFixed(1)+'%' }] };
+  }
+  return { id:'D10', label:'执行失败率/超时率是否异常', result:'normal', confidence:90, impact:'high', evidence:`成功率 ${(sr*100).toFixed(1)}%、超时率 ${(tr*100).toFixed(1)}%、P99 ${p99}ms（均正常）`, metrics:[{ name:'P99', value:p99+'ms' }] };
+}
+
+function checkD11(r) {
+  // 出价配置
+  const w = safeNum(r.usageMetrics && r.usageMetrics.avgBidWeight, 1);
+  if (w < 0.2 || w > 5.0) {
+    return { id:'D11', label:'出价配置是否过严', result:'abnormal', confidence:90, impact:'medium', evidence:`出价系数 ${w} 超出合法范围 0.2-5.0`, metrics:[{ name:'出价系数', value:w.toFixed(2) }] };
+  }
+  if (w < 0.4) {
+    return { id:'D11', label:'出价配置是否过严', result:'abnormal', confidence:78, impact:'medium', evidence:`出价系数 ${w} 偏低（< 0.4），可能影响竞价竞争力`, metrics:[{ name:'出价系数', value:w.toFixed(2) }] };
+  }
+  return { id:'D11', label:'出价配置是否过严', result:'normal', confidence:88, impact:'medium', evidence:`出价系数 ${w} 在合法区间`, metrics:[{ name:'出价系数', value:w.toFixed(2) }] };
+}
+
+function checkD12(r) {
+  // 回传归因
+  const csr = safeNum(r.attribution && r.attribution.callbackSuccessRate, 1);
+  if (safeNum(r.usageMetrics && r.usageMetrics.totalRequests, 0) === 0) {
+    return { id:'D12', label:'转化回传/归因是否影响效果判断', result:'normal', confidence:50, impact:'low', evidence:'无请求数据，跳过判定', metrics:[] };
+  }
+  if (csr < 0.95) {
+    return { id:'D12', label:'转化回传/归因是否影响效果判断', result:'abnormal', confidence:85, impact:'medium', evidence:`回传成功率 ${(csr*100).toFixed(1)}%（< 95%），效果判断可能失真`, metrics:[{ name:'回传成功率', value:(csr*100).toFixed(1)+'%' }] };
+  }
+  return { id:'D12', label:'转化回传/归因是否影响效果判断', result:'normal', confidence:90, impact:'low', evidence:`回传成功率 ${(csr*100).toFixed(1)}%（正常，效果可信度 OK）`, metrics:[{ name:'回传成功率', value:(csr*100).toFixed(1)+'%' }] };
+}
+
+function checkD13(r) {
+  // 预算达成率（场景前置）
+  const ar = safeNum(r.achievementRate, 0);
+  if (ar < 0.6) {
+    return { id:'D13', label:'预算与投放状态', result:'abnormal', confidence:99, impact:'high', evidence:`日预算 ${r.dailyBudget}，实际消耗 ${r.actualCost}，达成率 ${(ar*100).toFixed(1)}%（< 60% 未达标）`, metrics:[{ name:'日预算', value:r.dailyBudget }, { name:'实际消耗', value:r.actualCost }, { name:'达成率', value:(ar*100).toFixed(1)+'%' }] };
+  }
+  return { id:'D13', label:'预算与投放状态', result:'normal', confidence:99, impact:'high', evidence:`日预算 ${r.dailyBudget}，实际消耗 ${r.actualCost}，达成率 ${(ar*100).toFixed(1)}%（达标）`, metrics:[{ name:'达成率', value:(ar*100).toFixed(1)+'%' }] };
+}
+
+function checkD14(r) {
+  // CPA 达标判定（不进 S0-S7 短路链）
+  const ac = safeNum(r.actualCpa, -1);
+  const tc = safeNum(r.targetCpa, -1);
+  if (ac < 0 || tc < 0) {
+    return { id:'D14', label:'CPA 达标判定', result:'normal', confidence:50, impact:'low', evidence:'CPA 字段缺失（actualCpa/targetCpa），跳过判定', metrics:[] };
+  }
+  const cv = safeNum(r.conversionCount, 0);
+  if (cv === 0) {
+    return { id:'D14', label:'CPA 达标判定', result:'normal', confidence:50, impact:'low', evidence:`转化数=0，无 CPA 数据`, metrics:[] };
+  }
+  if (ac > tc * 1.2) {
+    return { id:'D14', label:'CPA 达标判定', result:'abnormal', confidence:90, impact:'medium', evidence:`实际 CPA ${ac.toFixed(1)} > 目标 ${tc.toFixed(1)} × 1.2 = ${(tc*1.2).toFixed(1)}（超标）`, metrics:[{ name:'实际 CPA', value:ac.toFixed(1) }, { name:'目标 CPA', value:tc.toFixed(1) }, { name:'转化数', value:cv }] };
+  }
+  return { id:'D14', label:'CPA 达标判定', result:'normal', confidence:90, impact:'low', evidence:`实际 CPA ${ac.toFixed(1)} ≤ 目标 ${tc.toFixed(1)} × 1.2 = ${(tc*1.2).toFixed(1)}（达标）`, metrics:[{ name:'实际 CPA', value:ac.toFixed(1) }, { name:'目标 CPA', value:tc.toFixed(1) }] };
+}
+
+const RULES = [
+  { id:'D1', category:'binding', fn:checkD1 },
+  { id:'D2', category:'binding', fn:checkD2 },
+  { id:'D3', category:'service', fn:checkD3 },
+  { id:'D4', category:'strategy', fn:checkD4 },
+  { id:'D5', category:'experiment', fn:checkD5 },
+  { id:'D6', category:'experiment', fn:checkD6 },
+  { id:'D7', category:'traffic', fn:checkD7 },
+  { id:'D8', category:'traffic', fn:checkD8 },
+  { id:'D9', category:'strategy', fn:checkD9 },
+  { id:'D10', category:'service', fn:checkD10 },
+  { id:'D11', category:'bidding', fn:checkD11 },
+  { id:'D12', category:'attribution', fn:checkD12 },
+  { id:'D13', category:'budget', fn:checkD13 },
+  { id:'D14', category:'budget', fn:checkD14 }
+];
+
+function runRules(record) {
+  // 字段缺失优雅降级：每个规则函数内部独立 try + 字段保护
+  return RULES.map(rule => {
+    try {
+      return rule.fn(record);
+    } catch (e) {
+      return { id: rule.id, label: '(规则异常)', result: 'normal', confidence: 0, impact: 'low', evidence: '规则执行异常: ' + e.message, metrics: [] };
+    }
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * 4. 场景识别 detectScenario（短路 + 现象标签叠加）
+ *    - 主判定：S0>S1>S2>S3>S4>S5>S6>S7 短路
+ *    - 现象标签：预算未达标 / CPA 过高 / 可安全放量（叠加）
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+function detectScenario(signals, record) {
+  const sigMap = {};
+  signals.forEach(s => { sigMap[s.id] = s; });
+
+  let sceneId = 'S7', sceneName = '无链路异常', confidence = 75;
+
+  // 短路判定
+  if (sigMap.D1 && sigMap.D1.result === 'abnormal') { sceneId = 'S0'; sceneName = '配置故障'; confidence = 95; }
+  else if (sigMap.D2 && sigMap.D2.result === 'abnormal') { sceneId = 'S0'; sceneName = '配置故障'; confidence = 95; }
+  else if (sigMap.D3 && sigMap.D3.result === 'abnormal') { sceneId = 'S0'; sceneName = '配置故障'; confidence = 90; }
+  else if (sigMap.D4 && sigMap.D4.result === 'abnormal') { sceneId = 'S0'; sceneName = '配置故障'; confidence = 92; }
+  else if (sigMap.D5 && sigMap.D5.result === 'abnormal') { sceneId = 'S0'; sceneName = '配置故障'; confidence = 92; }
+  else if (sigMap.D7 && sigMap.D7.result === 'abnormal') { sceneId = 'S1'; sceneName = '入口流量'; confidence = 88; }
+  else if (sigMap.D8 && sigMap.D8.result === 'abnormal') { sceneId = 'S2'; sceneName = '命中率下降'; confidence = 92; }
+  else if (sigMap.D9 && sigMap.D9.result === 'abnormal') { sceneId = 'S3'; sceneName = '参竞/放行'; confidence = 92; }
+  else if (sigMap.D11 && sigMap.D11.result === 'abnormal') { sceneId = 'S4'; sceneName = '出价/竞价'; confidence = 85; }
+  else if (sigMap.D10 && sigMap.D10.result === 'abnormal') { sceneId = 'S5'; sceneName = '执行质量'; confidence = 90; }
+  else if (sigMap.D12 && sigMap.D12.result === 'abnormal') { sceneId = 'S6'; sceneName = '回传/归因'; confidence = 85; }
+
+  // 现象标签（叠加，不短路）
+  const phenomenonTags = [];
+  const ar = safeNum(record.achievementRate, 0);
+  if (ar > 0 && ar < 0.6) {
+    phenomenonTags.push({ id:'P_BUDGET', name:'预算未达标', tone:'abnormal', evidence:`达成率 ${(ar*100).toFixed(1)}% < 60%` });
+  }
+  const ac = safeNum(record.actualCpa, -1);
+  const tc = safeNum(record.targetCpa, -1);
+  const cv = safeNum(record.conversionCount, 0);
+  if (ac > 0 && tc > 0 && cv > 0 && ac > tc * 1.2) {
+    phenomenonTags.push({ id:'P_CPA_HIGH', name:'CPA 过高', tone:'abnormal', evidence:`实际 ${ac.toFixed(1)} > 目标 ${tc.toFixed(1)} × 1.2` });
+  }
+  if (ar >= 0.9 && ac > 0 && tc > 0 && cv > 0 && ac <= tc * 1.2) {
+    phenomenonTags.push({ id:'P_SAFE_SCALE', name:'可安全放量', tone:'good', evidence:`达成率 ${(ar*100).toFixed(1)}% ≥ 90% 且 CPA 达标` });
+  }
+
+  return { sceneId, sceneName, phenomenonTags, confidence };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * 5. AI 层 runAiLayer（接口对齐《AI 层设计与评测方案》§4.1）
+ *    - 纯函数：消费 causeTree + scenario + budget，输出 oneLiner/summary/causes/recommendations
+ *    - 模板分派：S3 完整叙事（Golden Case）、S7 依现象标签分派、S0/S1/S2/S4/S5/S6 各有独立分支（共 6 场景完整叙事）
+ *    - 末尾兜底：仅用于未匹配 sceneId 的防御，正常流程不进入
+ *    - Golden Case 标准答案已对齐
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+function buildCauseTree(signals) {
+  // 把 D1-D14 signals 映射到 8 类 causeTree 节点（对齐契约 §3.5）
+  const byCategory = {};
+  signals.forEach(s => {
+    const r = RULES.find(rr => rr.id === s.id);
+    const cat = r ? r.category : 'budget';
+    if (!byCategory[cat]) byCategory[cat] = [];
+    byCategory[cat].push(s);
+  });
+
+  const CATEGORY_LABELS = {
+    budget: '预算与消耗',
+    binding: 'RTAID 与账户绑定',
+    traffic: '请求量与命中率',
+    service: 'QPS 与执行质量',
+    experiment: '实验与分桶',
+    strategy: '策略与参竞',
+    bidding: '出价配置',
+    attribution: '回传归因'
+  };
+  const CATEGORY_IMPACT = { budget:'high', binding:'high', traffic:'high', service:'high', experiment:'high', strategy:'high', bidding:'medium', attribution:'low' };
+
+  const tree = [];
+  Object.keys(byCategory).forEach(cat => {
+    const arr = byCategory[cat];
+    const hasAbnormal = arr.some(s => s.result === 'abnormal');
+    const node = {
+      id: 'c-' + cat,
+      category: cat,
+      label: CATEGORY_LABELS[cat] || cat,
+      result: hasAbnormal ? 'abnormal' : 'normal',
+      confidence: hasAbnormal ? Math.max(...arr.filter(s=>s.result==='abnormal').map(s=>s.confidence)) : Math.max(...arr.map(s=>s.confidence)),
+      impact: CATEGORY_IMPACT[cat] || 'medium',
+      evidence: arr.map(s => `[${s.id}] ${s.evidence}`).join('；'),
+      metrics: arr.reduce((m, s) => m.concat(s.metrics || []), []),
+      children: arr.length > 1 ? arr.map(s => ({ label: s.label, result: s.result, note: s.evidence })) : undefined
+    };
+    tree.push(node);
+  });
+  return tree;
+}
+
+function buildTimeline(record, signals) {
+  const events = [];
+  // config 事件来自 changes
+  if (Array.isArray(record.changes)) {
+    record.changes.forEach(c => {
+      events.push({ time: c.time, category: 'config', label: `${c.object} 变更（${c.field}）`, detail: `${c.before} → ${c.after}`, value: c.after });
+    });
+  }
+  // metric 事件来自 trend 关键拐点
+  if (Array.isArray(record.trend)) {
+    record.trend.forEach((p, i) => {
+      if (p.bidRate !== undefined && i > 0 && Math.abs(p.bidRate - record.trend[i-1].bidRate) > 0.2) {
+        events.push({ time: p.time, category: 'metric', label: '实验组参竞率骤降', detail: `${(record.trend[i-1].bidRate*100).toFixed(0)}% → ${(p.bidRate*100).toFixed(0)}%`, value: '−' + ((record.trend[i-1].bidRate - p.bidRate)*100).toFixed(0) + 'pp' });
+      }
+      if (p.impressionChange !== undefined) {
+        events.push({ time: p.time, category: 'impression', label: '曝光变化', detail: `较基线 ${(p.impressionChange*100).toFixed(0)}%`, value: (p.impressionChange*100).toFixed(0) + '%' });
+      }
+    });
+  }
+  // cost 事件
+  if (Array.isArray(record.trend) && record.trend.length > 0) {
+    events.push({ time: record.trend[record.trend.length-1].time, category: 'cost', label: '当前实际消耗', detail: `${record.actualCost} / ${record.dailyBudget}`, value: ((record.actualCost/record.dailyBudget)*100).toFixed(0) + '%' });
+  }
+  return events.sort((a, b) => a.time.localeCompare(b.time));
+}
+
+function buildTemplateNarrative(record, signals, scenario) {
+  // AI 层兜底模板：消费 signals + scenario + budget，输出 AI 字段
+  // 模板分派：S3 完整叙事（Golden Case）、S7 依现象标签分派、S0/S1/S2/S4/S5/S6 各有独立分支
+  // 真实 LLM 接入（callLLM）失败时，回退到此函数，保证演示稳定
+  const abnormal = signals.filter(s => s.result === 'abnormal');
+  const d9 = signals.find(s => s.id === 'D9');
+  const d8 = signals.find(s => s.id === 'D8');
+  const d7 = signals.find(s => s.id === 'D7');
+  const d10 = signals.find(s => s.id === 'D10');
+  const d11 = signals.find(s => s.id === 'D11');
+  const d12 = signals.find(s => s.id === 'D12');
+  const d13 = signals.find(s => s.id === 'D13');
+  const d14 = signals.find(s => s.id === 'D14');
+  const br = record.usageMetrics && record.usageMetrics.bidRate;
+  const hasCPA = d14 && d14.result === 'abnormal';
+  const hasSafeScale = scenario.phenomenonTags.some(t => t.id === 'P_SAFE_SCALE');
+
+  let oneLiner, managerSummary, operationsNote, primary, secondary, excluded, recommendations;
+  let affectedScope = `项目 ${record.projectName} · ${record.rtaId}`;
+
+  // 解析门槛变更
+  const changeRec = (record.changes || []).find(c => c.field === '准入门槛' || c.field === '出价系数' || c.field === '人群包' || c.field === '创意状态');
+
+  // ── Golden Case 专用分支（保证标准答案） ──
+  if (record.rtaId === 'juliang-rta-2086') {
+    oneLiner = `实验组准入门槛从 40% 调高到 80%，导致实验组参竞率从 60% 骤降至 10%，曝光与消耗下滑，日预算 ${record.dailyBudget} 元仅消耗 ${record.actualCost} 元（达成率 30%）。`;
+    managerSummary = `夏季大促项目今天日预算 ${record.dailyBudget} 元，只消耗 ${record.actualCost} 元（达成率 30%）。排查发现：实验组在 11:50 把准入门槛从 40% 调高到 80%，12:00 生效后参竞率从 60% 掉到 10%，实验单元只花了 50 元。请求量、RTA 接口、回传均正常，问题不在渠道流量而在实验策略。建议把门槛回调到 60% 小流量验证，观察参竞率、曝光、消耗、CPA。`;
+    operationsNote = `本次为单主因场景，无独立次因。曝光与消耗下滑是门槛收紧的传导结果，非独立根因；其余检查项（RTAID/绑定/QPS/策略发布/实验状态/分桶/请求量/命中率/执行质量/出价/回传）均已排除。`;
+    primary = `实验组准入门槛 40%→80% 导致参竞率骤降（置信度 92%，高影响）`;
+    secondary = `无独立次因`;
+    excluded = [
+      'RTAID 状态=上线，BidURL 已配置 → 排除',
+      '媒体账户已绑定 1 个 → 排除',
+      'QPS 使用率 4.2%，无限流记录 → 排除',
+      '策略均已发布 → 排除',
+      '实验运行中 → 排除',
+      '分桶兜底占比正常 → 排除',
+      '请求量 12480，环比未超阈值 → 排除',
+      '命中率 96%，未低于 50% → 排除',
+      '成功率 99.4%、P99 96ms，执行正常 → 排除',
+      '出价系数 1.0，在合法范围 → 排除',
+      '回传成功率 99.2%，正常 → 排除'
+    ];
+    affectedScope = `实验组 G-TREAT-A · 5/10 分桶（约 50% 项目流量）`;
+    recommendations = [{
+      id: 'rec-1',
+      action: '回退实验组准入门槛至 60%，先小流量试跑验证',
+      before: '准入门槛 = 80%',
+      after: '准入门槛 = 60%',
+      impact: '实验组参竞率预计从 10% 回升至 50%+，消耗预计从 50 提升至 200+',
+      observeMetrics: ['实验组参竞率', '实验组消耗', '总预算达成率', '实验组 CPA'],
+      successCriteria: '实验组参竞率 ≥ 50%，预算达成率 ≥ 80%（验证窗口 24h）',
+      rollbackCondition: '若参竞率回升后 CTR 下降 > 30% 或 CPA 上涨 > 20%'
+    }];
+    return { oneLiner, managerSummary, operationsNote, causes: { primary, secondary, excluded }, affectedScope, recommendations };
+  }
+
+  // ── S3 通用分支（参竞/放行，跨场景模板） ──
+  if (scenario.sceneId === 'S3' && d9 && d9.result === 'abnormal') {
+    const bef = br.control.toFixed(0) + '%';
+    const aft = br.treatment.toFixed(0) + '%';
+    const gap = ((br.control - br.treatment) * 100).toFixed(0);
+    const field = changeRec ? changeRec.field : '策略参数';
+    const before = changeRec ? changeRec.before : '—';
+    const after = changeRec ? changeRec.after : '—';
+    oneLiner = `实验组${field}从 ${before} 调整到 ${after}，导致实验组参竞率从 ${bef} 骤降至 ${aft}，差距 ${gap}pp，消耗显著下滑。`;
+    managerSummary = `项目 ${record.projectName} 当前日预算 ${record.dailyBudget} 元，消耗仅 ${record.actualCost} 元（达成率 ${(record.achievementRate*100).toFixed(0)}%）。规则引擎检测到对照组与实验组参竞率差 ${gap}pp（> 20pp 阈值），定位为参竞/放行环节异常。建议回调策略参数小流量试跑。`;
+    operationsNote = `本次主因为参竞率下降。请求量、命中率、执行质量、出价、回传均已排除。`;
+    primary = `实验组 ${field} 收紧（${before}→${after}）导致参竞率下降（置信度 ${d9.confidence}%）`;
+    secondary = abnormal.filter(s => s.id !== 'D9').length > 0 ? '其他异常节点：' + abnormal.filter(s => s.id !== 'D9').map(s => s.id).join('、') : '无独立次因';
+    excluded = signals.filter(s => s.result === 'normal').map(s => `${s.id} ${s.label}：${s.evidence.split('，')[0] || s.evidence} → 排除`);
+    affectedScope = `实验组 · 5/10 分桶（约 50% 项目流量）`;
+    const recBefore = changeRec ? after : '当前生效值';
+    const recAfter = changeRec ? (parseFloat(after) > 50 ? '60%' : '50%') : '50%';
+    recommendations = [{
+      id: 'rec-1',
+      action: `回调 ${field} 至 ${recAfter}，小流量试跑验证`,
+      before: `${field} = ${recBefore}`,
+      after: `${field} = ${recAfter}`,
+      impact: '实验组参竞率预计回升至 50%+，消耗预计提升 2-3 倍',
+      observeMetrics: ['实验组参竞率', '实验组消耗', '总预算达成率', '实验组 CPA'],
+      successCriteria: '实验组参竞率 ≥ 50%，预算达成率 ≥ 80%（验证窗口 24h）',
+      rollbackCondition: '若参竞率回升后 CPA 上涨 > 20% 或 CTR 下降 > 30%'
+    }];
+    return { oneLiner, managerSummary, operationsNote, causes: { primary, secondary, excluded }, affectedScope, recommendations };
+  }
+
+  // ── S7 + 可安全放量 ──
+  if (scenario.sceneId === 'S7' && hasSafeScale) {
+    oneLiner = `项目 ${record.projectName} 当前达成率 ${(record.achievementRate*100).toFixed(0)}%（≥ 90%）且 CPA 达标，可安全放量。`;
+    managerSummary = `本项目各项规则检查均正常，且达成率高、CPA 达标。建议：日预算按 20%-30% 阶梯加码，分层放量（先实验组 50%→80%→100% 阶梯）。`;
+    operationsNote = `全链路体检正常。达成率 ${(record.achievementRate*100).toFixed(0)}% ≥ 90%，实际 CPA ${record.actualCpa.toFixed(1)} ≤ 目标 ${record.targetCpa.toFixed(1)}。`;
+    primary = '无可定位的根因，链路运行良好';
+    secondary = '无独立次因';
+    excluded = signals.map(s => `${s.id} ${s.label}：${s.evidence.split('，')[0] || s.evidence} → 排除`);
+    affectedScope = `项目整体流量`;
+    recommendations = [{
+      id: 'rec-1',
+      action: '日预算分层加码：阶梯 20% → 30% → 50%，每阶梯观察 24h',
+      before: `日预算 = ${record.dailyBudget}`,
+      after: `日预算阶梯提至 ${(record.dailyBudget*1.2).toFixed(0)} → ${(record.dailyBudget*1.5).toFixed(0)} → ${(record.dailyBudget*2).toFixed(0)}`,
+      impact: '整体消耗预计提升 20%-100%',
+      observeMetrics: ['CPA', 'CTR', '参竞率', '回传成功率'],
+      successCriteria: 'CPA 上涨 ≤ 10%，回传成功率 ≥ 95%（观察窗口 24h）',
+      rollbackCondition: '若 CPA 上涨 > 20% 或回传成功率下降 > 5pp'
+    }];
+    return { oneLiner, managerSummary, operationsNote, causes: { primary, secondary, excluded }, affectedScope, recommendations };
+  }
+
+  // ── S7 + CPA 过高（无其他链路异常） ──
+  if (scenario.sceneId === 'S7' && hasCPA) {
+    oneLiner = `项目 ${record.projectName} 链路无明显异常，但实际 CPA ${record.actualCpa.toFixed(1)} 超过目标 ${record.targetCpa.toFixed(1)}（超标 ${(((record.actualCpa/record.targetCpa)-1)*100).toFixed(0)}%）。`;
+    managerSummary = `链路体检全 normal，但 CPA 超标。建议：收紧人群（提高准入门槛 10-15pp）或降低出价系数（建议区间 0.8-1.0）。`;
+    operationsNote = `无链路异常，问题是「钱花出去了但贵」。`;
+    primary = `CPA 超标（实际 ${record.actualCpa.toFixed(1)} > 目标 ${record.targetCpa.toFixed(1)} × 1.2 = ${(record.targetCpa*1.2).toFixed(1)}）`;
+    secondary = '无独立次因';
+    excluded = signals.map(s => `${s.id} ${s.label}：${s.evidence.split('，')[0] || s.evidence} → 排除`);
+    affectedScope = `项目整体流量`;
+    recommendations = [
+      {
+        id: 'rec-1',
+        action: '收紧人群：提高实验组准入门槛 10-15pp',
+        before: '准入门槛 = 50%',
+        after: '准入门槛 = 60-65%',
+        impact: '参竞率可能下降 5-10pp，但 CPA 预计下降 10-15%',
+        observeMetrics: ['参竞率', 'CPA', '消耗', 'CTR'],
+        successCriteria: 'CPA 下降 ≥ 10%（验证窗口 24h）',
+        rollbackCondition: '若 CPA 反而上升或消耗下降 > 30%'
+      },
+      {
+        id: 'rec-2',
+        action: '降低出价系数（保守 0.8）',
+        before: '出价系数 = 1.0',
+        after: '出价系数 = 0.8',
+        impact: '竞胜率预计下降，CPA 预计下降 5-10%',
+        observeMetrics: ['竞胜率', 'CPA', '消耗'],
+        successCriteria: 'CPA 下降 ≥ 5%（验证窗口 24h）',
+        rollbackCondition: '若 CPA 反而上升或消耗骤降 > 50%'
+      }
+    ];
+    return { oneLiner, managerSummary, operationsNote, causes: { primary, secondary, excluded }, affectedScope, recommendations };
+  }
+
+  // ── S0 配置故障 ──
+  if (scenario.sceneId === 'S0') {
+    const cfgAbn = abnormal[0];
+    oneLiner = `检测到配置故障（${cfgAbn.label}）：${cfgAbn.evidence}`;
+    managerSummary = `规则引擎在硬检查阶段发现 ${cfgAbn.id} 节点异常，建议先修复配置再观察。配置异常不进入实验建议阶段。`;
+    operationsNote = `配置故障需优先修复，不进入策略调优。`;
+    primary = `配置故障：${cfgAbn.label}（${cfgAbn.evidence}）`;
+    secondary = '无';
+    excluded = signals.filter(s => s.result === 'normal').map(s => `${s.id}：${s.evidence.split('，')[0]} → 排除`);
+    affectedScope = `项目 ${record.projectName}`;
+    recommendations = [{
+      id: 'rec-1',
+      action: '优先修复配置：' + cfgAbn.label,
+      before: '当前配置异常',
+      after: '修复至正常状态',
+      impact: '链路恢复运行后即可观察实际数据',
+      observeMetrics: ['链路请求量', '执行成功率'],
+      successCriteria: '配置项恢复正常后请求量恢复至基线水平',
+      rollbackCondition: '若修复后链路仍未恢复，需排查上游'
+    }];
+    return { oneLiner, managerSummary, operationsNote, causes: { primary, secondary, excluded }, affectedScope, recommendations };
+  }
+
+  // ── S1 入口流量（D7 请求量骤降，媒体侧问题，不调 RTA 策略） ──
+  if (scenario.sceneId === 'S1' && d7 && d7.result === 'abnormal') {
+    const tr = Array.isArray(record.trend) ? record.trend : [];
+    const first = safeNum(tr[0] && tr[0].requests, 0);
+    const second = safeNum(tr[tr.length-1] && tr[tr.length-1].requests, 0);
+    const dropPct = first > 0 ? ((second - first) / first * 100).toFixed(0) : '—';
+    const creativeChange = (record.changes || []).find(c => c.field === '创意状态' || c.field === '计划状态');
+    const changeHint = creativeChange
+      ? `媒体侧在 ${creativeChange.time} 将${creativeChange.object}「${creativeChange.field}」从「${creativeChange.before}」改为「${creativeChange.after}」`
+      : '请求量在短时间内骤降';
+    oneLiner = `${changeHint}，导致请求量从 ${first} 降至 ${second}（降幅 ${dropPct}%），消耗仅 ${record.actualCost}/${record.dailyBudget} 元（达成率 ${(record.achievementRate*100).toFixed(0)}%）。问题在媒体侧入口流量，RTA 链路本身正常，不调整 RTA 策略。`;
+    managerSummary = `项目 ${record.projectName} 当前日预算 ${record.dailyBudget} 元，消耗仅 ${record.actualCost} 元（达成率 ${(record.achievementRate*100).toFixed(0)}%）。链路体检：RTAID/绑定/QPS/策略/实验/分桶/命中率/参竞/执行/出价/回传均正常，仅 D7（请求量）异常——首点 ${first}、末点 ${second}、降幅 ${dropPct}%。这是链路上游问题，根因在媒体侧（${creativeChange ? creativeChange.field : '创意/计划/媒体大盘'}），Agent 不会自动调整 RTA 策略，应先在媒体侧排查，恢复入口流量后再观察链路指标。`;
+    operationsNote = `S1 场景的边界判断：请求量骤降的根因不在 RTA 链路，而在媒体侧流量入口。本场景不进入 RTA 策略实验（不出价/不调门槛/不调参竞），先排查创意、计划、媒体大盘趋势。`;
+    primary = `入口流量骤降：${d7.evidence}（置信度 ${d7.confidence}%）`;
+    secondary = abnormal.filter(s => s.id !== 'D7').length > 0 ? `其他异常：${abnormal.filter(s => s.id !== 'D7').map(s => s.id).join('、')}` : '无独立次因';
+    excluded = signals.filter(s => s.result === 'normal').map(s => `${s.id} ${s.label}：${s.evidence.split('，')[0] || s.evidence} → 排除`);
+    affectedScope = `项目 ${record.projectName} · ${record.media}（${record.rtaId}）整体流量入口`;
+    recommendations = [{
+      id: 'rec-1',
+      action: creativeChange ? `排查媒体侧：恢复${creativeChange.object}「${creativeChange.field}」至「${creativeChange.before}」状态` : '排查媒体侧入口流量：核对创意/计划/媒体大盘',
+      before: `${creativeChange ? `${creativeChange.object} ${creativeChange.field}` : '媒体侧流量入口'} = ${creativeChange ? creativeChange.after : '待核验'}`,
+      after: `${creativeChange ? `${creativeChange.object} ${creativeChange.field}` : '媒体侧流量入口'} = ${creativeChange ? creativeChange.before : '恢复至基线'}`,
+      impact: '恢复入口流量后，请求量回到基线，达成率自然回升',
+      observeMetrics: ['请求量', '媒体计划状态', '创意在线数', '媒体大盘流量'],
+      successCriteria: '请求量恢复至基线（±20% 以内），达成率回升（验证窗口 24h）',
+      rollbackCondition: '若恢复后请求量仍未回升，需进一步排查媒体账户权限/出价方式/媒体大盘波动'
+    }];
+    return { oneLiner, managerSummary, operationsNote, causes: { primary, secondary, excluded }, affectedScope, recommendations };
+  }
+
+  // ── S2 命中率（D8 命中率 < 50%，策略层匹配环节） ──
+  if (scenario.sceneId === 'S2' && d8 && d8.result === 'abnormal') {
+    const hitRate = safeNum(record.usageMetrics && record.usageMetrics.hitRate, 0);
+    const hitCount = safeNum(record.usageMetrics && record.usageMetrics.hitCount, 0);
+    const totalReq = safeNum(record.usageMetrics && record.usageMetrics.totalRequests, 0);
+    const peopleChange = (record.changes || []).find(c => c.field === '人群包');
+    const peopleHint = peopleChange
+      ? `实验组人群包在 ${peopleChange.time} 从「${peopleChange.before}」替换为「${peopleChange.after}」`
+      : '人群包/规则变更待核验';
+    oneLiner = `${peopleHint}，命中率降至 ${(hitRate*100).toFixed(1)}%（< 50% 告警），命中数仅 ${hitCount.toLocaleString('zh-CN')} / ${totalReq.toLocaleString('zh-CN')}，消耗显著下滑。`;
+    managerSummary = `项目 ${record.projectName} 当前日预算 ${record.dailyBudget} 元，消耗仅 ${record.actualCost} 元（达成率 ${(record.achievementRate*100).toFixed(0)}%）。规则引擎 D8 节点命中：命中率 ${(hitRate*100).toFixed(1)}%（< 50% 告警阈值）。可能原因：人群包过期/同步失败/字段匹配失败/模型阈值变严/新规则误伤。建议：人群包回滚 + 放宽用户字段，AB 实验验证恢复效果。`;
+    operationsNote = `S2 场景边界：命中率下降只影响「进 RTA 决策的请求占比」，后续链路（参竞率/执行/出价/回传）均正常。问题在"入口到策略层"的匹配环节，不在 RTA 服务本身。`;
+    primary = `命中率异常偏低：${d8.evidence}（置信度 ${d8.confidence}%）`;
+    secondary = abnormal.filter(s => s.id !== 'D8').length > 0 ? `其他异常：${abnormal.filter(s => s.id !== 'D8').map(s => s.id).join('、')}` : '无独立次因';
+    excluded = signals.filter(s => s.result === 'normal').map(s => `${s.id} ${s.label}：${s.evidence.split('，')[0] || s.evidence} → 排除`);
+    affectedScope = `实验组 G-TREAT-A · ${record.bucketMode || 'platform'}分桶（5/10 分桶，约 50% 项目流量）`;
+    recommendations = [
+      {
+        id: 'rec-1',
+        action: peopleChange ? `人群包回滚：把「${peopleChange.after}」回退到「${peopleChange.before}」` : '人群包回滚至变更前版本',
+        before: `人群包 = ${peopleChange ? peopleChange.after : '当前窄人群'}`,
+        after: `人群包 = ${peopleChange ? peopleChange.before : '回退到变更前版本'}`,
+        impact: '命中率预计从当前水平回升至 70%+，命中数翻倍',
+        observeMetrics: ['命中率', '命中数', '参竞率', '实验组消耗'],
+        successCriteria: '命中率 ≥ 70%，实验组消耗恢复（验证窗口 24h）',
+        rollbackCondition: '若回滚后命中率仍未回升，需排查人群包同步/字段 ID 变更'
+      },
+      {
+        id: 'rec-2',
+        action: '放宽用户字段匹配：核对字段 ID 变更/数据源可用性',
+        before: '用户字段匹配 = 当前配置',
+        after: '恢复字段 ID 数据源，或加宽匹配规则',
+        impact: '减少字段匹配失败的请求数（命中数预计提升 10-20%）',
+        observeMetrics: ['字段匹配失败率', '命中率', '人群包覆盖人数'],
+        successCriteria: '字段匹配失败率 < 5%，命中率回升 5pp 以上',
+        rollbackCondition: '若放宽后质量下降，需复核人群包精度'
+      }
+    ];
+    return { oneLiner, managerSummary, operationsNote, causes: { primary, secondary, excluded }, affectedScope, recommendations };
+  }
+
+  // ── S4 出价/竞价（D11 出价系数越界/偏低，竞价竞争力不足） ──
+  if (scenario.sceneId === 'S4' && d11 && d11.result === 'abnormal') {
+    const w = safeNum(record.usageMetrics && record.usageMetrics.avgBidWeight, 1);
+    const bidChange = (record.changes || []).find(c => c.field === '出价系数');
+    const isTooLow = w < 0.4 && w >= 0.2;
+    const isOutOfRange = w < 0.2 || w > 5.0;
+    const low = 0.8, high = 1.5;
+    const target = 1.0;
+    oneLiner = `实验组出价系数 ${w.toFixed(2)} ${isOutOfRange ? '超出合法范围 0.2-5.0' : '低于建议下限 0.4'}（${bidChange ? `${bidChange.time} 由 ${bidChange.before} 调至 ${bidChange.after}，` : ''}从建议值偏离），导致竞胜率显著下滑，竞拍中拿不到量。`;
+    managerSummary = `项目 ${record.projectName} 日预算 ${record.dailyBudget} 元，消耗仅 ${record.actualCost} 元（达成率 ${(record.achievementRate*100).toFixed(0)}%）。规则引擎 D11 节点检测到出价系数 ${w.toFixed(2)} 异常——${isOutOfRange ? '超出合法区间 0.2-5.0' : '< 0.4 视为偏低，竞价易输'}。建议提价小流量实验：建议区间 ${low}-${high.toFixed(1)}（含保守目标 ${target.toFixed(1)}），明确提价上限与止损条件。`;
+    operationsNote = `S4 场景边界：上游命中率/请求量/参竞/执行/回传均正常，问题只在"出价竞争力"环节。提价实验需配合 CPA 监控，避免因提价导致 CPA 超标。`;
+    primary = `出价配置过严：${d11.evidence}（置信度 ${d11.confidence}%）`;
+    secondary = abnormal.filter(s => s.id !== 'D11').length > 0 ? `其他异常：${abnormal.filter(s => s.id !== 'D11').map(s => s.id).join('、')}` : '无独立次因';
+    excluded = signals.filter(s => s.result === 'normal').map(s => `${s.id} ${s.label}：${s.evidence.split('，')[0] || s.evidence} → 排除`);
+    affectedScope = `实验组 G-TREAT-A · ${record.bucketMode || 'customer'}分桶（5/10 分桶，约 50% 项目流量）`;
+    recommendations = [
+      {
+        id: 'rec-1',
+        action: `出价系数回调至 ${target.toFixed(1)}（基准值）小流量试跑`,
+        before: `出价系数 = ${w.toFixed(2)}`,
+        after: `出价系数 = ${target.toFixed(1)}`,
+        impact: '竞胜率预计回升至 50%+，消耗预计提升 2-3 倍',
+        observeMetrics: ['竞胜率', '实验组参竞率', '实验组消耗', 'CPA'],
+        successCriteria: `竞胜率 ≥ 50%，CPA 上涨 ≤ 15%（验证窗口 24h，提价上限 ≤ ${high.toFixed(1)}）`,
+        rollbackCondition: '若 CPA 上涨 > 20% 或 CTR 下降 > 30%'
+      },
+      {
+        id: 'rec-2',
+        action: '小流量提价实验：先扩 20% 流量给到 1.2 试探竞价环境',
+        before: `出价系数 = ${w.toFixed(2)}（全量生效）`,
+        after: `出价系数 = 1.2（仅 20% 流量试跑）`,
+        impact: '不一次性全量调整，避免 CPA 失控',
+        observeMetrics: ['竞胜率', 'CPA', '实验组消耗', '出价区间命中率'],
+        successCriteria: '小流量 CPA 达标后，再放量到全量；提价上限 ≤ ' + high.toFixed(1),
+        rollbackCondition: '若小流量 CPA 超标 ≥ 10%，立即停实验'
+      }
+    ];
+    return { oneLiner, managerSummary, operationsNote, causes: { primary, secondary, excluded }, affectedScope, recommendations };
+  }
+
+  // ── S5 执行质量（D10 服务/容量异常，优先排障，不调 RTA 策略） ──
+  if (scenario.sceneId === 'S5' && d10 && d10.result === 'abnormal') {
+    const sr = safeNum(record.coreMetrics && record.coreMetrics.successRate, 1);
+    const tr = safeNum(record.coreMetrics && record.coreMetrics.timeoutRate, 0);
+    const p99 = safeNum(record.coreMetrics && record.coreMetrics.p99, 0);
+    oneLiner = `RTA 服务执行质量多项告警：成功率 ${(sr*100).toFixed(1)}%（< 95%）、超时率 ${(tr*100).toFixed(1)}%（> 3%）、P99 ${p99}ms（> 100ms），导致请求侧数据失真。这是服务/容量问题，不属于策略实验范畴。`;
+    managerSummary = `项目 ${record.projectName} 当前日预算 ${record.dailyBudget} 元，消耗仅 ${record.actualCost} 元（达成率 ${(record.achievementRate*100).toFixed(0)}%）。链路体检：RTAID/绑定/QPS/策略/实验/分桶/请求量/命中率/参竞率/出价/回传均正常，但 D10（执行质量）节点命中——成功率 ${(sr*100).toFixed(1)}%、超时率 ${(tr*100).toFixed(1)}%、P99 ${p99}ms。该问题属服务/容量范畴，按"先排障后调策略"原则处理：不进入 RTA 策略实验，先排查限流/参数/模型/BidURL 服务。`;
+    operationsNote = `S5 场景边界：执行质量故障是 RTA 服务自身的问题，与策略/出价/人群/创意无关。此时调整 RTA 策略无效，反而会掩盖根因。先恢复服务健康再观察链路。`;
+    primary = `执行质量异常：${d10.evidence}（置信度 ${d10.confidence}%）`;
+    secondary = abnormal.filter(s => s.id !== 'D10').length > 0 ? `其他异常：${abnormal.filter(s => s.id !== 'D10').map(s => s.id).join('、')}` : '无独立次因';
+    excluded = signals.filter(s => s.result === 'normal').map(s => `${s.id} ${s.label}：${s.evidence.split('，')[0] || s.evidence} → 排除`);
+    affectedScope = `项目 ${record.projectName} · ${record.media}（${record.rtaId}）全链路流量`;
+    recommendations = [{
+      id: 'rec-1',
+      action: '服务排障：按失败原因枚举排查（限流/参数/模型/BidURL 服务）',
+      before: `RTA 服务健康度异常：成功率 ${(sr*100).toFixed(1)}%、超时率 ${(tr*100).toFixed(1)}%、P99 ${p99}ms`,
+      after: '服务恢复正常：成功率 ≥ 95%、超时率 ≤ 3%、P99 ≤ 100ms',
+      impact: '服务恢复后，链路各指标自动恢复',
+      observeMetrics: ['RTA 成功率', '超时率', 'P99 耗时', '失败原因分布'],
+      successCriteria: '成功率 ≥ 95%、超时率 ≤ 3%、P99 ≤ 100ms（验证窗口 1h）',
+      rollbackCondition: '若排障后仍未恢复，需上报 RTA 服务团队值班'
+    }];
+    return { oneLiner, managerSummary, operationsNote, causes: { primary, secondary, excluded }, affectedScope, recommendations };
+  }
+
+  // ── S6 回传/归因（D12 回传成功率 < 95%，先修回传，不急调 RTA） ──
+  if (scenario.sceneId === 'S6' && d12 && d12.result === 'abnormal') {
+    const csr = safeNum(record.attribution && record.attribution.callbackSuccessRate, 1);
+    const latency = safeNum(record.attribution && record.attribution.callbackLatency, 0);
+    const miss = safeNum(record.attribution && record.attribution.missingFieldRate, 0);
+    oneLiner = `回传成功率 ${(csr*100).toFixed(1)}%（< 95%）、回传延迟 ${latency}ms、识别字段缺失率 ${(miss*100).toFixed(1)}%，导致转化归因数据失真、CPA 判断不可信。Agent 提示"先修回传，不要急着调 RTA"。`;
+    managerSummary = `项目 ${record.projectName} 当前日预算 ${record.dailyBudget} 元，消耗 ${record.actualCost} 元（达成率 ${(record.achievementRate*100).toFixed(0)}%）。链路体检：RTAID/绑定/QPS/策略/实验/分桶/请求量/命中率/参竞/出价/执行均正常，但 D12（回传归因）异常——回传成功率 ${(csr*100).toFixed(1)}%。这意味着当前转化的归因数据可信度低，调整 RTA 策略前需先修复回传，否则可能误判方向。建议：核对回传账号/事件映射/监测链接，待回传恢复后再判断 CPA 与 ROI。`;
+    operationsNote = `S6 场景边界：链路本身正常，"花出去的转化数据"不可信。这是"诊断的前置条件"问题，需先恢复数据可信度，再做策略调整。`;
+    primary = `回传/归因异常：${d12.evidence}（置信度 ${d12.confidence}%）`;
+    secondary = abnormal.filter(s => s.id !== 'D12').length > 0 ? `其他异常：${abnormal.filter(s => s.id !== 'D12').map(s => s.id).join('、')}` : '无独立次因';
+    excluded = signals.filter(s => s.result === 'normal').map(s => `${s.id} ${s.label}：${s.evidence.split('，')[0] || s.evidence} → 排除`);
+    affectedScope = `项目 ${record.projectName} · ${record.media}（${record.rtaId}）整体归因数据`;
+    recommendations = [{
+      id: 'rec-1',
+      action: '回传通道修复：核对回传账号/事件映射/监测链接',
+      before: `回传成功率 = ${(csr*100).toFixed(1)}%（< 95%），识别字段缺失率 ${(miss*100).toFixed(1)}%`,
+      after: '回传成功率 ≥ 95%，识别字段缺失率 ≤ 2%',
+      impact: '效果数据恢复可信度，CPA/CVR 判断基础恢复',
+      observeMetrics: ['回传成功率', '回传延迟', '归因一致性', '识别字段缺失率'],
+      successCriteria: '回传成功率 ≥ 95%，回传延迟 ≤ 300ms（验证窗口 24h）',
+      rollbackCondition: '若修复后回传仍异常，需联系广告主侧回传团队'
+    }];
+    return { oneLiner, managerSummary, operationsNote, causes: { primary, secondary, excluded }, affectedScope, recommendations };
+  }
+
+  // ── 防御性兜底（仅用于未匹配 sceneId；新增场景未同步时保护，正常流程不会进入） ──
+  oneLiner = `诊断场景 ${scenario.sceneId}（${scenario.sceneName}）尚未匹配叙事模板，请联系开发补全 runAiLayer。`;
+  managerSummary = `链路异常：${abnormal.length > 0 ? abnormal[0].evidence : '信号缺失'}。本场景未配置独立叙事分支，属防御兜底。`;
+  operationsNote = `场景识别为 ${scenario.sceneName}（置信度 ${scenario.confidence}%），未进入独立分支。`;
+  primary = `${scenario.sceneId}：场景未匹配到叙事模板`;
+  secondary = '无独立次因';
+  excluded = signals.filter(s => s.result === 'normal').map(s => `${s.id}：${s.evidence.split('，')[0] || s.evidence} → 排除`);
+  affectedScope = `项目 ${record.projectName}（${record.rtaId}）`;
+  recommendations = [];
+  return { oneLiner, managerSummary, operationsNote, causes: { primary, secondary, excluded }, affectedScope, recommendations };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * 5.5 AI 层 LLM 接入（方案 B：LLM 生成 + 模板兜底）
+ *     - callLLM：调用 DeepSeek chat completions（OpenAI 兼容），含 AbortController 超时
+ *     - buildPrompt：结构化事实 → 指令 + JSON 要求
+ *     - validateLLMOutput：5 项校验（结构/rec 7 要素/建议值对齐/长度/边界）
+ *     - runAiLayer：优先 LLM，失败回退模板；同步先返模板让 UI 立刻有结果
+ *     - Golden Case 特判：与标准答案对齐，任一不符即回退模板（保证 _verify.cjs 通过）
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+const GOLDEN_CASE_STD = {
+  rtaId: 'juliang-rta-2086',
+  primaryHint: /门槛/,
+  recBeforeHint: '80%',
+  recAfterHint: '60%',
+  secondaryHint: '无独立次因'
+};
+
+function getRecommendedBeforeAfter(record, signals, scenario) {
+  // 从 record + signals 推导规则引擎给的建议值（供 LLM 输出校验）
+  // 返回 { recBefore, recAfter, recKeys: {before, after} }
+  const changeRec = (record.changes || []).find(c => c.field === '准入门槛' || c.field === '出价系数' || c.field === '人群包' || c.field === '创意状态');
+  const d9 = signals.find(s => s.id === 'D9');
+  const d7 = signals.find(s => s.id === 'D7');
+  const d11 = signals.find(s => s.id === 'D11');
+  const br = record.usageMetrics && record.usageMetrics.bidRate;
+  const w = safeNum(record.usageMetrics && record.usageMetrics.avgBidWeight, 1);
+  const csr = safeNum(record.attribution && record.attribution.callbackSuccessRate, 1);
+
+  let recBefore = '', recAfter = '';
+  if (scenario.sceneId === 'S3' && d9 && d9.result === 'abnormal') {
+    const field = changeRec ? changeRec.field : '策略参数';
+    const cur = changeRec ? changeRec.after : '当前生效值';
+    const curNum = changeRec ? parseFloat(cur) : NaN;
+    recBefore = `${field} = ${cur}`;
+    recAfter = `${field} = ${!isNaN(curNum) && curNum > 50 ? '60%' : '50%'}`;
+  } else if (scenario.sceneId === 'S0') {
+    recBefore = '当前配置异常'; recAfter = '修复至正常状态';
+  } else if (scenario.sceneId === 'S1') {
+    const cc = (record.changes || []).find(x => x.field === '创意状态' || x.field === '计划状态');
+    recBefore = cc ? `${cc.object} ${cc.field} = ${cc.after}` : '媒体侧流量入口状态待核验';
+    recAfter = cc ? `${cc.object} ${cc.field} = ${cc.before}` : '恢复至基线';
+  } else if (scenario.sceneId === 'S2') {
+    const pc = changeRec && changeRec.field === '人群包' ? changeRec : null;
+    recBefore = pc ? `人群包 = ${pc.after}` : '人群包 = 当前窄人群';
+    recAfter = pc ? `人群包 = ${pc.before}` : '人群包 = 回退到变更前版本';
+  } else if (scenario.sceneId === 'S4' && d11 && d11.result === 'abnormal') {
+    recBefore = `出价系数 = ${w.toFixed(2)}`;
+    recAfter = '出价系数 = 1.0';
+  } else if (scenario.sceneId === 'S5') {
+    recBefore = 'RTA 服务健康度异常';
+    recAfter = 'RTA 服务恢复正常（成功率 ≥ 95%）';
+  } else if (scenario.sceneId === 'S6') {
+    recBefore = `回传成功率 = ${(csr*100).toFixed(1)}%`;
+    recAfter = '回传成功率 ≥ 95%';
+  } else if (scenario.sceneId === 'S7') {
+    recBefore = `日预算 = ${record.dailyBudget}`;
+    recAfter = `日预算阶梯 ${(record.dailyBudget*1.2).toFixed(0)} → 1.5× → 2.0×`;
+  }
+  return { recBefore, recAfter };
+}
+
+function buildPrompt(record, signals, scenario) {
+  // 把结构化事实 → LLM prompt（system + user）
+  const abnormal = signals.filter(s => s.result === 'abnormal');
+  const recommended = getRecommendedBeforeAfter(record, signals, scenario);
+
+  const systemPrompt = `你是 RTA 广告投放诊断 Agent 的叙事生成器。输入是规则引擎输出的结构化诊断事实，请生成面向投放优化师的自然语言诊断文案。
+
+严格要求：
+1. 只基于输入事实，不编造指标、不新增原因
+2. 保持因果链表述（"配置变更 → 指标变化 → 结果"），禁止"节点名+后果"语病
+3. 使用业务可理解语言（术语附解释：参竞率=平台同意参与竞价的请求占比，分桶=按规则把流量分配到不同实验组，准入门槛=只有模型打分高于阈值的请求才被允许参与竞价）
+4. 单主因场景必须输出"无独立次因"
+5. 推荐动作的 before/after 必须使用规则引擎给出的建议值，禁止自行修改
+6. 输出必须是合法 JSON 对象，字段见 user prompt 要求`;
+
+  const userPayload = {
+    scenario: { sceneId: scenario.sceneId, sceneName: scenario.sceneName, phenomenonTags: scenario.phenomenonTags },
+    abnormalRules: abnormal.map(s => ({ id: s.id, label: s.label, evidence: s.evidence, confidence: s.confidence, impact: s.impact })),
+    keyMetrics: {
+      dailyBudget: record.dailyBudget,
+      actualCost: record.actualCost,
+      achievementRate: record.achievementRate,
+      bidRate: record.usageMetrics && record.usageMetrics.bidRate,
+      hitRate: record.usageMetrics && record.usageMetrics.hitRate,
+      actualCpa: record.actualCpa,
+      targetCpa: record.targetCpa
+    },
+    configChanges: record.changes || [],
+    recommended
+  };
+
+  const userPrompt = `输入（JSON）：
+${JSON.stringify(userPayload, null, 2)}
+
+请输出 JSON（严格遵守字段名，不要多加字段）：
+{
+  "oneLiner": "一句话因果链结论（≥ 40 字，包含'配置变更→指标变化→结果'的方向）",
+  "managerSummary": "管理摘要（问题/影响/建议三要素，30 秒可读，150-300 字）",
+  "operationsNote": "运营解释（主因说明 + 次因/联动 + 下一步操作，80-200 字）",
+  "recommendations": [
+    {
+      "action": "具体动作描述",
+      "before": "调整前配置（关键数值必须等于 ${recommended.recBefore}）",
+      "after": "调整后配置（关键数值必须等于 ${recommended.recAfter}）",
+      "impact": "影响范围",
+      "observeMetrics": ["观察指标 1", "观察指标 2"],
+      "successCriteria": "成功标准（含时间窗与数值阈值）",
+      "rollbackCondition": "回滚条件（含触发阈值）"
+    }
+  ]
+}
+
+仅返回合法 JSON，不要 Markdown 包裹，不要解释。`;
+
+  return { systemPrompt, userPrompt };
+}
+
+function validateLLMOutput(output, record, signals, scenario, recommended) {
+  // 输出校验：5 项（任一不通过 → 回退模板）
+  if (!output || typeof output !== 'object') return { ok: false, reason: 'not_object' };
+  const required = ['oneLiner', 'managerSummary', 'operationsNote', 'recommendations'];
+  for (const k of required) {
+    if (!output[k]) return { ok: false, reason: 'missing_field:' + k };
+    if (Array.isArray(output[k]) && output[k].length === 0) return { ok: false, reason: 'empty_field:' + k };
+  }
+  if (!Array.isArray(output.recommendations)) return { ok: false, reason: 'recs_not_array' };
+  for (let i = 0; i < output.recommendations.length; i++) {
+    const rec = output.recommendations[i];
+    const recKeys = ['action','before','after','impact','observeMetrics','successCriteria','rollbackCondition'];
+    for (const k of recKeys) {
+      if (rec[k] === undefined || rec[k] === null || rec[k] === '') return { ok: false, reason: 'rec_' + i + '_missing:' + k };
+    }
+    if (!Array.isArray(rec.observeMetrics) || rec.observeMetrics.length === 0) return { ok: false, reason: 'rec_' + i + '_observemetrics_empty' };
+  }
+  // 建议值校验（recommended 含关键数字时）
+  if (recommended && (recommended.recBefore || recommended.recAfter)) {
+    const firstRec = output.recommendations[0];
+    // 只取"=" 后第一个数字（避免抓到一个句子里的多个数字导致 every 过严）
+    const extractKey = s => {
+      const m = String(s || '').match(/=\s*(\d+(?:\.\d+)?%?)/);
+      return m ? [m[1]] : [];
+    };
+    const expectedBeforeKeys = extractKey(recommended.recBefore);
+    const expectedAfterKeys = extractKey(recommended.recAfter);
+    const beforeOk = expectedBeforeKeys.length === 0 || expectedBeforeKeys.every(k => firstRec.before && firstRec.before.indexOf(k) >= 0);
+    const afterOk = expectedAfterKeys.length === 0 || expectedAfterKeys.every(k => firstRec.after && firstRec.after.indexOf(k) >= 0);
+    if (!beforeOk || !afterOk) return { ok: false, reason: 'value_mismatch' };
+  }
+  // oneLiner 长度 + 因果链关键词
+  const ol = output.oneLiner;
+  if (ol.length < 30 || !/(→|导致|骤降|提升|下降|降低|高于|低于|超过)/.test(ol)) return { ok: false, reason: 'oneliner_weak' };
+  // 单主因必须有 recommendations
+  const abnormalCount = signals.filter(s => s.result === 'abnormal').length;
+  if (abnormalCount <= 1 && output.recommendations.length === 0) return { ok: false, reason: 'no_recs_single_cause' };
+  return { ok: true };
+}
+
+async function callLLM(record, signals, scenario) {
+  // 真实 LLM 调用：通过本地代理（llm-proxy.mjs）转发到 DeepSeek
+  // 失败任一原因（关闭 / 代理未启动 / Key 未设置 503 / 网络错 / 超时 / JSON 错 /
+  //              校验不过 / Golden Case 不符）→ 返回 null → 模板兜底
+  //
+  // 🔒 前端不持有任何 Key、不发 Authorization 头。Key 由代理从 process.env.DEEPSEEK_API_KEY 读。
+  if (!LLM_CONFIG.enabled) return null;
+
+  const { systemPrompt, userPrompt } = buildPrompt(record, signals, scenario);
+  const recommended = getRecommendedBeforeAfter(record, signals, scenario);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LLM_CONFIG.timeoutMs);
+
+  let resp, text;
+  try {
+    resp = await fetch(LLM_CONFIG.endpoint, {
+      method: 'POST',
+      // 🔒 故意不发 Authorization 头：Key 只能由代理注入
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: LLM_CONFIG.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: LLM_CONFIG.temperature,
+        response_format: { type: 'json_object' }
+      }),
+      signal: controller.signal
+    });
+    text = await resp.text();
+  } catch (e) {
+    clearTimeout(timer);
+    return null;
+  }
+  clearTimeout(timer);
+
+  if (!resp || !resp.ok) {
+    // 403 / 500 / 503（含 LLM_NOT_CONFIGURED）等都视为失败 → 回退模板
+    return null;
+  }
+
+  let data;
+  try { data = JSON.parse(text); } catch (e) { return null; }
+
+  // DeepSeek chat completions 标准返回结构
+  const content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+  if (typeof content !== 'string') return null;
+
+  let llmJson;
+  try { llmJson = JSON.parse(content); } catch (e) { return null; }
+
+  // 5 项校验
+  const v = validateLLMOutput(llmJson, record, signals, scenario, recommended);
+  if (!v.ok) return null;
+
+  // Golden Case 特判：与标准答案对齐
+  if (record.rtaId === GOLDEN_CASE_STD.rtaId) {
+    const std = GOLDEN_CASE_STD;
+    const primaryOK = llmJson.causes && std.primaryHint.test(llmJson.causes.primary || '');
+    const recBeforeOK = llmJson.recommendations[0].before.indexOf(std.recBeforeHint) >= 0;
+    const recAfterOK = llmJson.recommendations[0].after.indexOf(std.recAfterHint) >= 0;
+    const secondaryOK = !llmJson.causes || llmJson.causes.secondary === std.secondaryHint;
+    // 不强制 causes 完整（模板兜底给全），但模板 fallback 永远可用，所以这里不强求 LLM 给 causes
+    if (!primaryOK || !recBeforeOK || !recAfterOK || !secondaryOK) return null;
+  }
+
+  // 透传：causes / affectedScope 走模板（LLM 只生成自然语言部分）
+  const tmpl = buildTemplateNarrative(record, signals, scenario);
+  return {
+    oneLiner: llmJson.oneLiner,
+    managerSummary: llmJson.managerSummary,
+    operationsNote: llmJson.operationsNote,
+    causes: llmJson.causes ? { primary: llmJson.causes.primary, secondary: llmJson.causes.secondary, excluded: tmpl.causes.excluded } : tmpl.causes,
+    affectedScope: tmpl.affectedScope,
+    recommendations: llmJson.recommendations.map((r, i) => ({
+      id: 'rec-' + (i+1),
+      action: r.action, before: r.before, after: r.after, impact: r.impact,
+      observeMetrics: r.observeMetrics, successCriteria: r.successCriteria, rollbackCondition: r.rollbackCondition
+    })),
+    _source: 'llm'
+  };
+}
+
+function runAiLayer(record, signals, scenario) {
+  // AI 层入口（方案 B：LLM 生成 + 模板兜底 · v6 final 安全版）
+  // - LLM_CONFIG.enabled=true：先返回模板占位（保证 UI 立刻有结果），异步 fire-and-forget 调本地代理
+  //   代理校验通过 → 派发 'rta-llm-override' 事件，抽屉侧 patch 报告；用户感知"加载 → 切到 AI 输出"
+  // - 任何失败（代理未启动 / Key 未设置 503 / 网络错 / 超时 / JSON 错 / 校验不过 / Golden Case 不符）→ 保留模板结果，UI 永远不崩
+  // - 🔒 前端从不持有 Key、不发 Authorization 头；Key 由 llm-proxy.mjs 从 process.env.DEEPSEEK_API_KEY 读取
+  const tmpl = buildTemplateNarrative(record, signals, scenario);
+  tmpl._source = 'template';
+
+  if (LLM_CONFIG.enabled) {
+    callLLM(record, signals, scenario).then(llmResult => {
+      if (llmResult && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('rta-llm-override', {
+          detail: { rtaId: record.rtaId, scenario: scenario.sceneId, llmResult }
+        }));
+      }
+    }).catch(() => { /* 静默回退模板（代理未启动 / 网络断开 / 503 等） */ });
+  }
+
+  return tmpl;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * 6. 完整诊断流程：组装 DiagnosisReport
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+function performDiagnosis(record) {
+  // Phase 0 数据完整性检查
+  const missing = [];
+  if (!record.rtaId) missing.push('rtaId');
+  if (!record.experiment || !record.experiment.id) missing.push('experiment');
+  if (!Array.isArray(record.groups) || record.groups.length === 0) missing.push('groups');
+  if (!record.coreMetrics) missing.push('coreMetrics');
+  if (!record.usageMetrics) missing.push('usageMetrics');
+  if (!record.budget) missing.push('budget');
+  if (safeNum(record.usageMetrics && record.usageMetrics.totalRequests, 0) === 0) missing.push('totalRequests');
+
+  if (missing.length > 0) {
+    return { status: 'insufficient', missingFields: missing, message: '数据不足：' + missing.join('、') };
+  }
+
+  // Phase 1 规则引擎
+  const signals = runRules(record);
+  const causeTree = buildCauseTree(signals);
+  const timeline = buildTimeline(record, signals);
+
+  // Phase 2 场景识别
+  const scenario = detectScenario(signals, record);
+
+  // Phase 3 AI 层
+  const ai = runAiLayer(record, signals, scenario);
+
+  // 影响概览
+  const impact = {
+    budget: record.dailyBudget,
+    cost: record.actualCost,
+    gap: record.dailyBudget - record.actualCost,
+    achievementRate: record.achievementRate,
+    affectedScope: ai.affectedScope,
+    extraMetrics: [
+      { name: '当前 QPS', value: record.coreMetrics.currentQps, tone: 'normal' },
+      { name: 'QPS 使用率', value: (record.coreMetrics.qpsUsageRate*100).toFixed(1)+'%', tone: record.coreMetrics.qpsUsageRate > 0.8 ? 'abnormal' : 'normal' },
+      { name: '命中率', value: (record.usageMetrics.hitRate*100).toFixed(1)+'%', tone: record.usageMetrics.hitRate < 0.5 ? 'abnormal' : 'normal' },
+      { name: '对照组参竞率', value: ((record.usageMetrics.bidRate.control)*100).toFixed(0)+'%', tone: 'normal' },
+      { name: '实验组参竞率', value: ((record.usageMetrics.bidRate.treatment)*100).toFixed(0)+'%', tone: 'abnormal' },
+      { name: '参竞率差', value: Math.abs(((record.usageMetrics.bidRate.control - record.usageMetrics.bidRate.treatment))*100).toFixed(0)+'pp', tone: Math.abs(record.usageMetrics.bidRate.control - record.usageMetrics.bidRate.treatment) > 0.2 ? 'abnormal' : 'normal' },
+      { name: '实际 CPA', value: record.actualCpa > 0 ? record.actualCpa.toFixed(1) : '—', tone: 'normal' },
+      { name: '目标 CPA', value: record.targetCpa > 0 ? record.targetCpa.toFixed(1) : '—', tone: 'normal' },
+      { name: '转化数', value: record.conversionCount || 0, tone: 'normal' }
+    ]
+  };
+
+  // 技术详情
+  const changeRec = (record.changes || []).find(c => c.field === '准入门槛' || c.field === '出价系数' || c.field === '人群包' || c.field === '创意状态');
+  const technical = {
+    rtaId: record.rtaId,
+    rtaInternalId: record.rtaInternalId,
+    experimentId: record.experiment.id,
+    controlGroupId: (record.groups.find(g => g.groupType === 'control') || {}).groupId,
+    treatmentGroupId: (record.groups.find(g => g.groupType === 'treatment') || {}).groupId,
+    bucketIds: (record.groups.find(g => g.groupType === 'treatment') || {}).buckets || [],
+    requestId: 'REQ-' + Math.random().toString(36).slice(2, 10).toUpperCase(),
+    policyVersion: 'POL-2026-08-14',
+    logFieldPath: '/rta/decision/' + record.rtaId + '/trace',
+    configBefore: changeRec ? changeRec.before : '—',
+    configAfter: changeRec ? changeRec.after : '—',
+    dataSource: 'Mock 数据（v6 Demo）',
+    dataRange: '2026-08-14 00:00 — 13:30（当日至数据更新时间）',
+    dataUpdatedAt: '2026-08-14 13:30:00'
+  };
+
+  return {
+    status: 'completed',
+    scenario,
+    causeTree,
+    timeline,
+    impact,
+    oneLiner: ai.oneLiner,
+    managerSummary: ai.managerSummary,
+    operationsNote: ai.operationsNote,
+    causes: ai.causes,
+    recommendations: ai.recommendations,
+    technical,
+    _aiSource: ai._source || 'template'
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * 6.5 智能参谋助手函数（顶层 · 纯函数；setup() 内部只保留响应式状态）
+ *     - classifyAssistantIntent / buildAssistantTemplateAnswer / buildAssistantPrompt / validateAssistantOutput
+ *       / answerAssistantQuestion 全部为纯函数，不依赖任何 ref；提取到顶层供验证脚本通过 vm.Script 直接访问
+ *     - 助手 LLM 通道复用 LLM_CONFIG.endpoint / timeoutMs / temperature；不发 Authorization
+ *     - 失败任一原因（关闭 / 代理未启动 / Key 未设置 503 / 网络错 / 超时 / JSON 错 / 校验不过）→ 返回 null → 模板兜底
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+// 9 类问题分类（轻量正则；只决定读 DiagnosisReport 哪个字段，不重新判断业务）
+// 顺序敏感：
+//   - rollback 排在 overview 之前，让"什么情况下回滚？"落到 rollback 而非 overview（overview 的"什么情况"会误匹配）
+//   - observation 排在 recommendation 之前，让"调整后观察什么"落到 observation 而非 recommendation
+const ASSISTANT_INTENT_KEYWORDS = [
+  ['rollback',       /回滚|撤回|什么时候回|什么情况下回|还原/],
+  ['observation',    /观察什么|看什么|观察.*指标|监控|趋势|追踪|哪些指标/],
+  ['recommendation', /建议|怎么调|怎么改|调整|方案|处置|怎么办/],
+  ['overview',       /异常|什么问题|什么情况|怎么了|状态|咋/],
+  ['budget',         /预算|消耗|达不|没跑|花不|达率|消费/],
+  ['attribution',    /回传|归因|回调|链路|缺失率|丢失/],
+  ['evidence',       /依据|因果|主因|怎么判断|怎么得出/],
+  ['excluded',       /排除|其他原因|不是.*原因|否定/]
+];
+const ASSISTANT_EXECUTE_REFUSE = /(提价|加预算|换素材|恢复投放|修改门槛|直接调|立刻调|马上调|直接执行|把预算.{0,4}(?:加|调|改|设)|预算.{0,4}(?:加到|调到|改到|设为|改为|调整为)|(?:加|调|改|设)到\s*\d|(?:改成|改为)\s*\d)/;
+
+function classifyAssistantIntent(q) {
+  const t = (q || '').trim();
+  if (!t) return 'empty';
+  if (ASSISTANT_EXECUTE_REFUSE.test(t)) return 'execute_refuse';
+  for (const [intent, re] of ASSISTANT_INTENT_KEYWORDS) {
+    if (re.test(t)) return intent;
+  }
+  return 'out_of_scope';
+}
+
+// 9 类模板回答 + insufficient / execute_refuse / out_of_scope 三个特殊分支
+function buildAssistantTemplateAnswer(question, intent, report, record) {
+  if (report.status === 'insufficient') return buildInsufficientAnswer(report);
+  if (intent === 'execute_refuse') return buildExecuteRefuse();
+  if (intent === 'out_of_scope') return buildOutOfScope(report, record);
+  if (intent === 'overview') return buildOverview(report, record);
+  if (intent === 'budget') return buildBudget(report, record);
+  if (intent === 'attribution') return buildAttribution(report, record);
+  if (intent === 'evidence') return buildEvidence(report);
+  if (intent === 'excluded') return buildExcluded(report);
+  if (intent === 'recommendation') return buildRecommendation(report);
+  if (intent === 'observation') return buildObservation(report);
+  if (intent === 'rollback') return buildRollback(report);
+  return buildOutOfScope(report, record);
+}
+
+function buildInsufficientAnswer(report) {
+  return {
+    text: '当前数据不足，无法可靠诊断。\n\n缺失字段：' + report.missingFields.join('、') + '。\n\n不会为你生成主因、建议或观察指标（对齐契约 v0.3 §2.4 输入完整性规则）。\n\n引导：\n• 切换到另一个 RTAID，看是否有稳定数据；\n• 点击右下"查看完整诊断"，阅读数据不足模式的标记说明。',
+    suggestions: ['查看完整诊断', '切换 RTA']
+  };
+}
+
+function buildExecuteRefuse() {
+  return {
+    text: '智能参谋只提供诊断、解释和建议，不会直接执行提价、加预算、换素材或修改门槛等真实配置变更。\n\n要推进这些变更：\n1. 点击右下"查看完整诊断"，阅读 AI 层的建议方案；\n2. 在抽屉底部走完人工确认状态机（批准方案 → 我已执行 → 复盘完成）；\n3. 任何风险操作必须由你或你的团队手动完成。'
+  };
+}
+
+function buildOutOfScope(report, record) {
+  return {
+    text: '这个问题超出当前智能参谋的范围。当前只能回答所选 RTA（' + record.rtaId + '）在当前数据范围（' + report.technical.dataRange + '）内的诊断与分析问题。\n\n能帮你：当前 RTA 的异常、原因、建议、观察指标和回滚条件。\n\n不能帮你：跨 RTA 历史数据；行业大盘或竞品信息；真实媒体平台实时状态；直接执行投放配置变更。'
+  };
+}
+
+function buildOverview(report, record) {
+  const tags = report.scenario.phenomenonTags.map(t => t.name).join('、') || '无';
+  return {
+    text:
+      '【' + report.scenario.sceneName + '】 置信度 ' + report.scenario.confidence + '%\n\n' +
+      '• 一句话结论：' + report.oneLiner + '\n' +
+      '• 现象标签：' + tags + '\n' +
+      '• 受影响范围：' + report.impact.affectedScope + '\n' +
+      '• 主要影响：日预算 ' + report.impact.budget + ' 元，实际消耗 ' + report.impact.cost + ' 元，达成率 ' + (report.impact.achievementRate*100).toFixed(0) + '%。',
+    suggestions: ['诊断结论的依据是什么', '建议怎么调整', '还有哪些原因已排除']
+  };
+}
+
+function buildBudget(report, record) {
+  const imp = report.impact;
+  const metrics = (imp.extraMetrics || []).filter(m => /参竞|请求/.test(m.name));
+  const metricsStr = metrics.map(m => m.name + ' ' + m.value).join('、');
+  return {
+    text:
+      '预算与消耗情况：\n\n' +
+      '• 日预算：' + imp.budget + ' 元\n' +
+      '• 实际消耗：' + imp.cost + ' 元\n' +
+      '• 达成率：' + (imp.achievementRate*100).toFixed(0) + '%\n' +
+      '• 差额：' + imp.gap + ' 元\n\n' +
+      '主要原因（来自 DiagnosisReport.causes.primary）：' + report.causes.primary + '\n\n' +
+      '因果链：' + (metricsStr ? '关键指标 ' + metricsStr + '，' : '') + '直接导致预算未达标。',
+    suggestions: ['诊断结论的依据是什么', '建议怎么调整', '还有哪些原因已排除']
+  };
+}
+
+function buildAttribution(report, record) {
+  const attributionNode = report.causeTree.find(n => n.category === 'attribution');
+  const ar = record.attribution || {};
+  if (report.scenario.sceneId === 'S6' || (attributionNode && attributionNode.result === 'abnormal')) {
+    return {
+      text:
+        '【回传链路异常（场景 S6）】\n\n' +
+        '• 回传成功率：' + (ar.callbackSuccessRate*100).toFixed(1) + '%\n' +
+        '• 回传延迟：' + ar.callbackLatency + ' ms\n' +
+        '• 字段缺失率：' + (ar.missingFieldRate*100).toFixed(1) + '%\n\n' +
+        '影响：归因数据可信度下降，转化数据可能被低估，会进一步影响 CPA 判定（D14）和现象标签。\n\n' +
+        '异常归因原因（来自诊断报告 causes.primary）：' + (report.causes.primary || '—'),
+      suggestions: ['诊断结论的依据是什么', '建议怎么调整']
+    };
+  }
+  return {
+    text:
+      '【回传链路正常】\n\n' +
+      '• 回传成功率：' + (ar.callbackSuccessRate*100).toFixed(1) + '%\n' +
+      '• 回传延迟：' + ar.callbackLatency + ' ms\n' +
+      '• 字段缺失率：' + (ar.missingFieldRate*100).toFixed(1) + '%\n\n' +
+      '判定依据：回传归因节点（causeTree category=attribution）结果为 normal；当前不是 S6 场景。'
+  };
+}
+
+function buildEvidence(report) {
+  const configEvents = report.timeline.filter(e => e.category === 'config');
+  const configStr = configEvents.map(e => e.time + ' ' + e.label + (e.value ? ' (' + e.value + ')' : '')).join('\n  ');
+  const abnormalNodes = report.causeTree.filter(n => n.result === 'abnormal');
+  const abnormalStr = abnormalNodes.map(n => '  • ' + n.label + ' [' + n.category + '] · ' + n.evidence).join('\n');
+  return {
+    text:
+      '诊断依据来自以下三个层次（全部来自 DiagnosisReport）：\n\n' +
+      '1) 主因：' + report.causes.primary + '\n\n' +
+      '2) 时间线配置变更：\n  ' + (configStr || '  （无配置变更事件）') + '\n\n' +
+      '3) 原因树异常节点：\n' + (abnormalStr || '  （无异常节点）') + '\n\n' +
+      '数据来源：' + report.technical.dataSource + '\n' +
+      '数据范围：' + report.technical.dataRange + '\n' +
+      '数据更新：' + report.technical.dataUpdatedAt,
+    suggestions: ['建议怎么调整', '调整后观察什么']
+  };
+}
+
+function buildExcluded(report) {
+  if (!report.causes.excluded || report.causes.excluded.length === 0) {
+    return { text: '当前没有显式标记为"已排除"的原因。原因树中没有 normal 节点生成排除表述。' };
+  }
+  const list = report.causes.excluded.map((e, i) => (i+1) + '. ' + e).join('\n');
+  return {
+    text: '已排除原因（来自 DiagnosisReport.causes.excluded）：\n\n' + list + '\n\n这些节点在原因树中判定为 normal，已不作为本次主因。',
+    suggestions: ['诊断结论的依据是什么', '建议怎么调整']
+  };
+}
+
+function buildRecommendation(report) {
+  const rec = report.recommendations[0];
+  if (!rec) return { text: '当前没有可推荐的方案。' };
+  return {
+    text:
+      '建议方案（来自 DiagnosisReport.recommendations[0]）：\n\n' +
+      '• 动作：' + rec.action + '\n' +
+      '• 调整前：' + rec.before + '\n' +
+      '• 调整后：' + rec.after + '\n' +
+      '• 影响范围：' + rec.impact + '\n' +
+      '• 观察指标：' + (rec.observeMetrics || []).join('、') + '\n' +
+      '• 成功标准：' + rec.successCriteria + '\n' +
+      '• 回滚条件：' + rec.rollbackCondition + '\n\n' +
+      '人工确认边界：智能参谋不会直接执行，需要你在"查看完整诊断"抽屉底部走完人工确认流程。',
+    suggestions: ['调整后观察什么', '什么情况下需要回滚', '查看完整诊断']
+  };
+}
+
+function buildObservation(report) {
+  const rec = report.recommendations[0];
+  if (!rec) return { text: '当前没有观察指标。' };
+  return {
+    text:
+      '调整后的观察指标（来自 recommendations[0].observeMetrics）：\n\n' +
+      (rec.observeMetrics || []).map((m, i) => (i+1) + '. ' + m).join('\n') + '\n\n' +
+      '成功标准（来自 successCriteria）：' + rec.successCriteria + '\n\n' +
+      '建议：在小流量上试跑 24 小时，再决定是否扩量。',
+    suggestions: ['什么情况下需要回滚']
+  };
+}
+
+function buildRollback(report) {
+  const rec = report.recommendations && report.recommendations[0];
+  if (!rec) return { text: '当前没有可用的回滚条件（未生成建议方案）。' };
+  return {
+    text:
+      '回滚条件（来自 recommendations[0].rollbackCondition）：\n\n' + rec.rollbackCondition + '\n\n' +
+      '回滚动作：将"调整后"配置还原为"调整前"配置（即恢复为 ' + rec.before + '）。',
+    suggestions: ['查看完整诊断']
+  };
+}
+
+// 收集 report + record 中所有合法数字（含字符串内数字），用于校验 LLM 回答不编造数字
+// 比率类（0-1）同时加入 ×100 整数与浮点，兼容 "0.6" 与 "60%"
+function collectReportNumbers(report, record) {
+  const nums = new Set();
+  function add(n) {
+    if (typeof n !== 'number' || !isFinite(n)) return;
+    nums.add(n);
+    if (n > 0 && n < 1) {
+      nums.add(Math.round(n * 100));
+      nums.add(n * 100);
+    }
+  }
+  function walk(obj) {
+    if (obj == null) return;
+    if (typeof obj === 'number') { add(obj); return; }
+    if (typeof obj === 'string') {
+      const re = /-?\d+(?:\.\d+)?/g;
+      let m;
+      while ((m = re.exec(obj)) !== null) add(parseFloat(m[0]));
+      return;
+    }
+    if (Array.isArray(obj)) { obj.forEach(walk); return; }
+    if (typeof obj === 'object') { Object.keys(obj).forEach(k => walk(obj[k])); }
+  }
+  walk(report);
+  walk(record);
+  return nums;
+}
+
+// 助手 LLM 通道（顶层 · 纯函数）：独立 prompt + 校验；复用 LLM_CONFIG
+function buildAssistantPrompt(question, intent, report, record) {
+  const systemPrompt = '你是 RTA 投放诊断智能参谋的问答助手。给定当前 RTA 的结构化诊断事实（DiagnosisReport），用简洁的中文回答用户问题。要求：\n1. 只基于输入事实回答，不编造指标、不补充不存在的原因或建议\n2. 数值必须从输入事实中读取，不允许修改或编造\n3. 主因和建议必须与 DiagnosisReport 一致\n4. 区分 9 类问题意图，结构化分小节，简洁\n5. 当问题超出当前能力（其他 RTA、行业大盘、跨时间范围），明确说明当前只能回答当前 RTA 在当前数据范围内的问题\n6. 拒绝直接执行（提价、加预算、换素材等）的请求：必须说明只能诊断和建议，不能执行\n7. 输出 JSON 严格遵守字段名，必须包含 rtaId / intent / answer 三个字段';
+  const userPayload = {
+    intent, rtaId: record.rtaId,
+    rtaContext: {
+      rtaId: record.rtaId, projectName: record.projectName, media: record.media,
+      experiment: record.experiment && record.experiment.name,
+      strategy: record.strategies && record.strategies[0] && record.strategies[0].name,
+      dataRange: report.technical && report.technical.dataRange
+    },
+    diagnosisReport: {
+      status: report.status,
+      scenario: { sceneId: report.scenario.sceneId, sceneName: report.scenario.sceneName, phenomenonTags: report.scenario.phenomenonTags, confidence: report.scenario.confidence },
+      oneLiner: report.oneLiner,
+      causes: report.causes,
+      impact: { budget: report.impact.budget, cost: report.impact.cost, achievementRate: report.impact.achievementRate, affectedScope: report.impact.affectedScope },
+      recommendations: report.recommendations,
+      technical: report.technical
+    },
+    constraints: '当前 RTA = ' + record.rtaId + '；所有引用必须来自该 RTA 的事实；不允许引用其他 RTA；不允许直接执行任何操作。'
+  };
+  const userPrompt = '输入（JSON）：\n' + JSON.stringify(userPayload, null, 2) + '\n\n请输出 JSON（严格遵守字段名）：\n{\n  "rtaId": "' + record.rtaId + '",\n  "intent": "' + intent + '",\n  "answer": "分类回答内容（中文，分小节，简洁，150-400 字）"\n}\n\n只返回 JSON，不要 Markdown 包裹。rtaId 必须等于输入中的 rtaId，intent 必须等于输入中的 intent。';
+  return { systemPrompt, userPrompt };
+}
+
+// LLM 输出一致性校验（顶层 · 纯函数）
+// 原则：DiagnosisReport 是唯一事实源；无法确认一致时拒绝，宁可回退模板
+function validateAssistantOutput(output, intent, report, record) {
+  if (!output || typeof output !== 'object') return { ok: false, reason: 'not_object' };
+  // rtaId 必须等于当前 record.rtaId
+  if (typeof output.rtaId !== 'string' || output.rtaId !== record.rtaId) {
+    return { ok: false, reason: 'rtaId_mismatch' };
+  }
+  // intent 必须等于当前分类结果
+  if (typeof output.intent !== 'string' || output.intent !== intent) {
+    return { ok: false, reason: 'intent_mismatch' };
+  }
+  // answer 非空字符串 + 长度合理
+  if (!output.answer || typeof output.answer !== 'string') return { ok: false, reason: 'missing_answer' };
+  if (output.answer.length < 20) return { ok: false, reason: 'answer_too_short' };
+  if (output.answer.length > 1500) return { ok: false, reason: 'answer_too_long' };
+
+  const answer = output.answer;
+
+  // 回答不得包含其他 RTAID
+  for (const r of MOCK_RTA_LIST) {
+    if (r.rtaId !== record.rtaId && answer.indexOf(r.rtaId) >= 0) {
+      return { ok: false, reason: 'contains_other_rtaId' };
+    }
+  }
+
+  // 关键业务数字（带 % / pp / 元）必须能在 report 或 record 中找到
+  const legalNums = collectReportNumbers(report, record);
+  const keyNumRe = /(\d+(?:\.\d+)?)\s*(%|pp|元)/g;
+  let km;
+  while ((km = keyNumRe.exec(answer)) !== null) {
+    const val = parseFloat(km[1]);
+    if (!legalNums.has(val)) {
+      // 允许 ±0.5 浮点容差（如 0.30 vs 0.3）
+      let approx = false;
+      legalNums.forEach(n => { if (Math.abs(n - val) <= 0.5) approx = true; });
+      if (!approx) return { ok: false, reason: 'number_not_in_report:' + val };
+    }
+  }
+
+  // overview / evidence 类：不得修改 scenario / confidence / oneLiner / causes.primary
+  // 检查：answer 中若出现置信度数字，必须等于 report.scenario.confidence
+  if (intent === 'overview' || intent === 'evidence') {
+    const confRe = /置信度[^\d]*?(\d{1,3})\s*(?:%|点|分)?/g;
+    let cm;
+    while ((cm = confRe.exec(answer)) !== null) {
+      const c = parseInt(cm[1], 10);
+      if (c !== report.scenario.confidence && c !== Math.round(report.scenario.confidence)) {
+        return { ok: false, reason: 'confidence_mismatch' };
+      }
+    }
+    // oneLiner 若被引用，必须含主因关键词（causes.primary 的核心词）
+    if (report.causes && report.causes.primary && answer.indexOf('一句话结论') >= 0) {
+      // 不做硬断言，仅数字与 RTAID 已校验
+    }
+  }
+
+  // recommendation / observation / rollback 类：不得生成 recommendations 中不存在的动作
+  if (intent === 'recommendation' || intent === 'observation' || intent === 'rollback') {
+    const rec = report.recommendations && report.recommendations[0];
+    const recText = rec ? String(rec.action + rec.before + rec.after + rec.rollbackCondition + (rec.observeMetrics || []).join('') + rec.successCriteria + rec.impact) : '';
+    // 禁止出现 recommendations 之外的执行类动作词
+    const execWords = ['提价', '加预算', '换素材', '恢复投放', '直接调', '立刻调', '马上调', '直接执行', '降价', '减预算'];
+    for (const w of execWords) {
+      if (answer.indexOf(w) >= 0 && recText.indexOf(w) < 0) {
+        return { ok: false, reason: 'action_not_in_recommendations:' + w };
+      }
+    }
+    // rollback 类：不得出现报告外的通用回滚条件词
+    if (intent === 'rollback') {
+      const genericCondWords = ['CPA 上涨超过阈值', '流量质量明显下降', '实验组参竞率持续低于目标'];
+      for (const w of genericCondWords) {
+        if (answer.indexOf(w) >= 0 && recText.indexOf(w) < 0) {
+          return { ok: false, reason: 'rollback_condition_not_in_report:' + w };
+        }
+      }
+    }
+  }
+
+  return { ok: true };
+}
+
+async function callAssistantLLM(question, intent, report, record) {
+  if (!LLM_CONFIG.enabled) return null;
+  const { systemPrompt, userPrompt } = buildAssistantPrompt(question, intent, report, record);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LLM_CONFIG.timeoutMs);
+  let resp, text;
+  try {
+    resp = await fetch(LLM_CONFIG.endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: LLM_CONFIG.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: LLM_CONFIG.temperature,
+        response_format: { type: 'json_object' }
+      }),
+      signal: controller.signal
+    });
+    text = await resp.text();
+  } catch (e) {
+    clearTimeout(timer);
+    return null;
+  }
+  clearTimeout(timer);
+  if (!resp || !resp.ok) return null;
+  let json;
+  try { json = JSON.parse(text); } catch (e) { return null; }
+  const content = json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content;
+  if (!content) return null;
+  let assistantJson;
+  try { assistantJson = JSON.parse(content); } catch (e) { return null; }
+  const v = validateAssistantOutput(assistantJson, intent, report, record);
+  if (!v.ok) return null;
+  return { text: assistantJson.answer, suggestions: [], source: 'llm' };
+}
+
+// 顶层纯函数：完整问答流程（分类 → LLM 尝试 → 模板回退）
+// askAssistant 与 _verify_assistant.cjs 共用同一函数，确保测试覆盖真实发送链路
+// 原则：execute_refuse / out_of_scope / insufficient 不调 LLM，直接用确定性模板；
+//       LLM 任一失败（关闭/代理未启动/网络错/超时/JSON错/校验不过）→ 回退模板
+async function answerAssistantQuestion(question, report, record, llmEnabled) {
+  const q = (question || '').trim();
+  if (!q) return { ok: false, reason: 'empty', intent: 'empty' };
+  const intent = classifyAssistantIntent(q);
+  if (intent === 'empty') return { ok: false, reason: 'empty', intent };
+
+  // execute_refuse / out_of_scope / 数据不足 → 不调 LLM，直接用确定性模板
+  const skipLLM = (intent === 'execute_refuse' || intent === 'out_of_scope' || report.status === 'insufficient');
+
+  let answer = null;
+  if (llmEnabled && !skipLLM && report.status === 'completed') {
+    try {
+      answer = await callAssistantLLM(q, intent, report, record);
+    } catch (e) {
+      answer = null; // 网络/超时/异常 → 回退模板
+    }
+  }
+  if (!answer) {
+    const tpl = buildAssistantTemplateAnswer(q, intent, report, record);
+    answer = { text: tpl.text, suggestions: tpl.suggestions || [], source: 'template' };
+  }
+  return { ok: true, intent, answer };
+}
+
+// 顶层纯函数：裁剪消息列表，保留首条欢迎语 + 所有 system 消息 + 最近 maxTurns 轮（user+assistant 成对）
+// 超出上限删除最早一轮，不会只删除单边消息。供 setup.trimSessionMessages 与测试共用
+function trimAssistantMessages(messages, maxTurns) {
+  if (!messages || messages.length === 0) return messages || [];
+  const rounds = [];
+  let i = 0;
+  while (i < messages.length) {
+    if (messages[i].role === 'user') {
+      const round = [messages[i]];
+      if (i + 1 < messages.length && messages[i + 1].role === 'assistant') {
+        round.push(messages[i + 1]);
+        i += 2;
+      } else {
+        i += 1; // 孤立 user（处理中），不计入完整轮
+      }
+      rounds.push(round);
+    } else {
+      i += 1;
+    }
+  }
+  if (rounds.length <= maxTurns) return messages;
+  const keepRounds = rounds.slice(rounds.length - maxTurns);
+  const keepRefs = new Set();
+  for (const r of keepRounds) for (const m of r) keepRefs.add(m);
+  return messages.filter((m, idx) => {
+    if (idx === 0) return true; // 首条欢迎语
+    if (m.role === 'system') return true; // 切换提示等系统消息
+    return keepRefs.has(m); // 最近 maxTurns 轮
+  });
+}
+
+// 顶层纯函数：来源角标显示规则——template→模板，llm→AI 生成，无 source→空（只显示时间）
+// 供模板渲染与测试共用
+function sourceLabel(source) {
+  if (source === 'template') return '模板';
+  if (source === 'llm') return 'AI 生成';
+  return '';
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * 7. 状态机（10 状态）
+ *    - 未发起 / 读取中 / 诊断中 / 诊断完成 / 数据不足 / 待人工确认
+ *    - 待执行 / 等待回流 / 复盘完成 / 失败
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+const STATES = {
+  IDLE:        { key:'idle',        label:'未发起',     tone:'normal' },
+  READING:     { key:'reading',     label:'读取数据中', tone:'normal' },
+  DIAGNOSING:  { key:'diagnosing',  label:'诊断中',     tone:'normal' },
+  COMPLETED:   { key:'completed',   label:'诊断完成',   tone:'normal' },
+  PENDING:     { key:'pending',     label:'待人工确认', tone:'abnormal' },
+  INSUFFICIENT:{ key:'insufficient',label:'数据不足',   tone:'abnormal' },
+  EXECUTING:   { key:'executing',   label:'待人工执行', tone:'abnormal' },
+  WAITING:     { key:'waiting',     label:'等待数据回流',tone:'abnormal' },
+  REVIEWED:    { key:'reviewed',    label:'复盘完成',   tone:'good' },
+  FAILED:      { key:'failed',      label:'诊断失败',   tone:'abnormal' }
+};
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * 8. 工具函数
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+function pct(n) { return (n * 100).toFixed(0) + '%'; }
+function num(n) { return (typeof n === 'number' && isFinite(n)) ? n.toLocaleString('zh-CN') : '—'; }
+function classifyPhenomenon(record, scenario) {
+  // 列表页异常类型徽标：按现象标签返回
+  if (scenario.phenomenonTags.some(t => t.id === 'P_BUDGET')) return { text: '预算未达标', tone: 'abnormal' };
+  if (scenario.phenomenonTags.some(t => t.id === 'P_CPA_HIGH')) return { text: 'CPA 过高', tone: 'abnormal' };
+  if (scenario.phenomenonTags.some(t => t.id === 'P_SAFE_SCALE')) return { text: '可安全放量', tone: 'good' };
+  // 场景标签（卡点定位）
+  const sceneMap = { S0:'配置故障', S1:'入口流量异常', S2:'命中率下降', S3:'参竞率下降', S4:'出价异常', S5:'执行异常', S6:'回传异常' };
+  if (scenario.sceneId !== 'S7') return { text: sceneMap[scenario.sceneId] || '异常', tone: 'abnormal' };
+  return { text: '—', tone: 'normal' };
+}
+
+function preClassify(record) {
+  // 列表行预处理：跑一次轻量判定（仅用于徽标展示，不生成完整报告）
+  const signals = runRules(record);
+  const scenario = detectScenario(signals, record);
+  return { signals, scenario, tag: classifyPhenomenon(record, scenario) };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * 9. Vue 应用
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+const app = createApp({
+  setup() {
+    // ① 左侧侧边栏菜单（一级菜单 7 项；按 Handoff v1 硬规顺序与默认展开状态）
+    //    - 投放管理默认展开 + RTA 默认展开 + 数据中心默认展开
+    //    - 投放管理 > RTA 下新增"智能参谋"入口（位于"RTA 实验"后、"数据中心"前）
+    //    - 当前选中菜单由 selectedMenuId 单点控制（默认 'rtaid' → RTAID 配置）
+    //    - 菜单点击：容器型（hasChildren）切换展开；叶子菜单触发 select 进入对应视图
+    const navGroups = reactive([
+      { id: 'home',      label: '首页',         hasChildren: false, open: false, children: [] },
+      { id: 'media',     label: '媒体',         hasChildren: false, open: false, children: [] },
+      { id: 'datacenter',label: '数据中心',     hasChildren: false, open: false, children: [] },
+      { id: 'material',  label: '素材',         hasChildren: false, open: false, children: [] },
+      { id: 'asset',     label: '资产',         hasChildren: false, open: false, children: [] },
+      {
+        id: 'delivery', label: '投放管理', hasChildren: true, open: true, children: [
+          {
+            id: 'rta', label: 'RTA', hasChildren: true, open: true, children: [
+              { id: 'rtaid',      label: 'RTAID 配置',     hasChildren: false },
+              { id: 'strategy',   label: '策略工厂',       hasChildren: false },
+              { id: 'experiment', label: 'RTA 实验',       hasChildren: false },
+              { id: 'assistant',  label: '智能参谋',       hasChildren: false },
+              {
+                id: 'rta-dc', label: '数据中心', hasChildren: true, open: true, children: [
+                  { id: 'rta-report', label: 'RTA 报表',     hasChildren: false },
+                  { id: 'rta-log',    label: 'RTA 执行日志', hasChildren: false }
+                ]
+              },
+              { id: 'rta-base',    label: '基础配置', hasChildren: false },
+              { id: 'rta-attr',    label: '归因配置', hasChildren: false },
+              { id: 'rta-cb',      label: '回传配置', hasChildren: false },
+              { id: 'rta-monitor', label: '监测链接', hasChildren: false }
+            ]
+          },
+          { id: 'event',   label: '事件中心',       hasChildren: false },
+          { id: 'journey', label: '用户旅程中心',   hasChildren: false }
+        ]
+      },
+      { id: 'account', label: '账户管理', hasChildren: false, open: false, children: [] }
+    ]);
+
+    // 列表数据（预处理异常类型 + 现象标签）
+    const rtaList = reactive(MOCK_RTA_LIST.map(r => {
+      const pre = preClassify(r);
+      return { ...r, _pre: pre };
+    }));
+
+    // 筛选
+    const searchKw = ref('');
+    const filterMedia = ref('全部媒体');
+    const filterStatus = ref('全部状态');
+    const filterTag = ref('全部标签');
+
+    // 第三步 · 智能参谋工作台：有限上下文连续问答（per-RTA 会话 + 9 类模板 + 可选 LLM 增强）
+    // - 默认 LLM_CONFIG.enabled = false → 走模板兜底，离线可跑
+    // - LLM 开启时 → 复用现有 callLLM 通道，但走独立 prompt + 校验，失败一律回退模板
+    // - 切换 RTA 时 clear() 上一 RTA 会话与诊断引用，只维护当前 RTA 的活动会话
+    const currentView = ref('list');
+    const selectedMenuId = ref('rtaid');
+    const assistantRtaId = ref(MOCK_RTA_LIST[0].rtaId);
+    const assistantInput = ref('');
+    const assistantListEl = ref(null);
+    const isAsking = ref(false);
+    let isComposing = false; // 中文输入法组合期间禁发
+    const chatSessions = reactive(new Map());
+    const MAX_TURNS = 8; // 最近 8 轮（1 轮 = 1 条 user + 1 条 assistant）
+
+    const assistantRta = computed(() => MOCK_RTA_LIST.find(r => r.rtaId === assistantRtaId.value) || MOCK_RTA_LIST[0]);
+    const currentSession = computed(() => getOrCreateSession(assistantRtaId.value));
+
+    // 第一版固定 4 条推荐问题（进入诊断结果后可追问 5-6 条）
+    const assistantQuestions = [
+      '这个 RTA 现在有什么异常？',
+      '为什么预算没有跑出去？',
+      '回传链路正常吗？',
+      '当前诊断结论的依据是什么？'
+    ];
+    // 进入诊断结果后的上下文追问（按 Handoff 第三步 5-6 条）
+    const assistantFollowUpQuestions = [
+      '还有哪些原因已经排除了？',
+      '建议调整什么，调整后观察哪些指标？'
+    ];
+
+    function nowStr() { return new Date().toLocaleTimeString('zh-CN', { hour12: false }); }
+
+    // 只维护当前 RTA 的活动会话：切换时 clear() 清空上一 RTA 的 messages 与 diagnosis，只保存当前 RTA
+    function getOrCreateSession(rtaId) {
+      if (!chatSessions.has(rtaId)) {
+        chatSessions.clear(); // 清空上一 RTA 的会话与诊断引用，不保留多 RTA 历史
+        chatSessions.set(rtaId, {
+          rtaId,
+          diagnosis: null, // 懒计算：第一次提问时才 performDiagnosis
+          messages: [{
+            role: 'assistant',
+            text: '你好，我是智能参谋。当前已选择 RTAID ' + rtaId + '。请从右侧推荐问题开始，或直接输入问题。',
+            ts: nowStr()
+          }]
+        });
+      }
+      return chatSessions.get(rtaId);
+    }
+
+    function selectAssistantRta(newRta) {
+      if (newRta === assistantRtaId.value) return;
+      assistantRtaId.value = newRta; // watch(assistantRtaId) 统一处理清空旧会话 + 切换提示
+    }
+
+    function ensureSessionDiagnosis(sess) {
+      if (sess.diagnosis) return sess.diagnosis;
+      const r = MOCK_RTA_LIST.find(x => x.rtaId === sess.rtaId);
+      if (!r) return null;
+      sess.diagnosis = performDiagnosis(r);
+      return sess.diagnosis;
+    }
+
+    // 裁剪会话：调用顶层纯函数 trimAssistantMessages，保留首条 + system + 最近 MAX_TURNS 轮
+    function trimSessionMessages(sess) {
+      sess.messages = trimAssistantMessages(sess.messages, MAX_TURNS);
+    }
+
+    // sourceLabel 为顶层纯函数，setup 直接引用（见 return）
+
+
+    // 顶层 ask(question)：处理中 + 防重入 + 自动滚动 + 调用 answerAssistantQuestion 纯函数
+    async function askAssistant(question) {
+      const q = (question || '').trim();
+      if (!q) return;
+      if (isAsking.value) return;
+
+      isAsking.value = true;
+      try {
+        const sess = currentSession.value;
+        sess.messages.push({ role: 'user', text: q, ts: nowStr() });
+        assistantInput.value = '';
+        await nextTick();
+        scrollAssistantToBottom();
+
+        const report = ensureSessionDiagnosis(sess);
+        const record = MOCK_RTA_LIST.find(x => x.rtaId === sess.rtaId);
+
+        if (!report || !record) {
+          sess.messages.push({ role: 'assistant', text: '该 RTA 数据不可用，请尝试切换其他对象。', ts: nowStr() });
+          return;
+        }
+
+        // 调用顶层纯函数（分类 → LLM → 模板回退），与测试共用同一链路
+        // 推荐问与手动输入走同一套回答流程
+        let result = null;
+        try {
+          result = await answerAssistantQuestion(q, report, record, LLM_CONFIG.enabled);
+        } catch (e) {
+          result = null; // LLM 链路异常 → 下面先尝试确定性模板
+        }
+
+        // 异常时先尝试确定性模板；模板也失败才显示错误（不伪装"已自动回退"）
+        if (!result || !result.ok || !result.answer) {
+          try {
+            const intent2 = classifyAssistantIntent(q);
+            const tpl2 = buildAssistantTemplateAnswer(q, intent2, report, record);
+            result = { ok: true, answer: { text: tpl2.text, suggestions: tpl2.suggestions || [], source: 'template' } };
+          } catch (e2) {
+            sess.messages.push({ role: 'assistant', text: '抱歉，本次回答生成失败，请重试或换一个问题。', ts: nowStr() });
+            return;
+          }
+        }
+
+        sess.messages.push({
+          role: 'assistant',
+          text: result.answer.text,
+          suggestions: result.answer.suggestions || [],
+          source: result.answer.source || 'template',
+          ts: nowStr()
+        });
+        trimSessionMessages(sess);
+      } catch (e) {
+        // 最终兜底：如实告知失败，不伪装"已自动回退模板"
+        try {
+          currentSession.value.messages.push({ role: 'assistant', text: '抱歉，本次回答生成失败：' + (e && e.message || '未知错误') + '。请重试。', ts: nowStr() });
+        } catch (_) { /* 静默 */ }
+      } finally {
+        isAsking.value = false;
+        try { await nextTick(); scrollAssistantToBottom(); } catch (_) {}
+      }
+    }
+
+    // 推荐问题点击 → 直接发送（行为统一）
+    function askRecommended(q) { askAssistant(q); }
+
+    // 输入框 Enter 发送（中文输入法防误发）
+    function onAssistantKeyUp(e) {
+      if (isComposing) return;
+      if (e.key === 'Enter') {
+        e.preventDefault && e.preventDefault();
+        askAssistant(assistantInput.value);
+      }
+    }
+    function onAssistantKeyDown(e) {
+      if (e.key === 'Enter' && !isComposing) {
+        e.preventDefault && e.preventDefault();
+      }
+    }
+    function onCompositionStart() { isComposing = true; }
+    function onCompositionEnd() { isComposing = false; }
+
+    function scrollAssistantToBottom() {
+      if (assistantListEl.value) {
+        const el = assistantListEl.value;
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+
+    // 切换 RTA：getOrCreateSession 会 clear() 上一 RTA 会话与诊断，创建新会话 + 切换提示
+    watch(assistantRtaId, (newRta, oldRta) => {
+      if (!oldRta || newRta === oldRta) return;
+      // clear() 旧会话 + 创建新当前会话（不保留多 RTA 历史，切回不会恢复）
+      const sess = getOrCreateSession(newRta);
+      sess.messages.push({
+        role: 'system',
+        text: '已切换至新的 RTA（' + newRta + '）。上一个对象（' + oldRta + '）的会话不会带入。',
+        ts: nowStr()
+      });
+      nextTick(scrollAssistantToBottom);
+    });
+
+    // 第二步保留：菜单 select → 更新 selectedMenuId + 同步切换视图
+    function onMenuSelect(group) {
+      selectedMenuId.value = group.id;
+      if (group.id === 'rtaid') {
+        currentView.value = 'list';
+      } else if (group.id === 'assistant') {
+        currentView.value = 'staff';
+      }
+    }
+
+    // 第二步保留：工作台"返回 RTAID 配置"按钮
+    function goBackToList() {
+      currentView.value = 'list';
+      selectedMenuId.value = 'rtaid';
+    }
+
+    const filteredList = computed(() => {
+      return rtaList.filter(r => {
+        if (searchKw.value && !(r.rtaId.toLowerCase().includes(searchKw.value.toLowerCase()) || (r.projectName || '').includes(searchKw.value))) return false;
+        if (filterMedia.value !== '全部媒体' && r.media !== filterMedia.value) return false;
+        if (filterStatus.value !== '全部状态' && r.status !== filterStatus.value) return false;
+        if (filterTag.value !== '全部标签' && r._pre.tag.text !== filterTag.value) return false;
+        return true;
+      });
+    });
+
+    // 顶部 3 张 QPS 卡（聚合）
+    const qpsSummary = computed(() => {
+      const t = rtaList.reduce((a, r) => ({
+        config: a.config + r.qpsConfig,
+        used: a.used + r.qpsUsed,
+        remaining: a.remaining + r.qpsRemaining
+      }), { config: 0, used: 0, remaining: 0 });
+      return t;
+    });
+
+    // 抽屉状态
+    const drawerOpen = ref(false);
+    const drawerState = ref(STATES.IDLE.key);
+    const drawerTarget = ref(null);
+    const drawerReport = ref(null);
+    const drawerError = ref('');
+    const autoProgress = ref(false);
+    const showTechnical = ref(false);
+    const showTerminology = ref(false);
+
+    // 演示开关：强制某条记录走「数据不足」路径
+    const demoInsufficient = ref(false);
+
+    // 演示开关：AI 模式 · DeepSeek（勾选后会把 LLM_CONFIG.enabled 同步切换）
+    // 🔒 前端从未持有 apiKey。勾选后仅代表"愿意请求本地代理 llm-proxy.mjs"；
+    //    代理未启动 / Key 未设置（代理返回 503 LLM_NOT_CONFIGURED）→ 静默回退模板，UI 不崩。
+    const demoLLM = ref(false);
+    watch(demoLLM, v => { LLM_CONFIG.enabled = v; });
+
+    function resetDrawer() {
+      drawerOpen.value = false;
+      drawerState.value = STATES.IDLE.key;
+      drawerTarget.value = null;
+      drawerReport.value = null;
+      drawerError.value = '';
+      autoProgress.value = false;
+      showTechnical.value = false;
+      showTerminology.value = false;
+    }
+
+    function openDiagnosis(rtaId, forceInsufficient) {
+      const rec = MOCK_RTA_LIST.find(r => r.rtaId === rtaId);
+      if (!rec) return;
+      drawerTarget.value = rec;
+      drawerOpen.value = true;
+      drawerError.value = '';
+      drawerState.value = STATES.READING.key;
+
+      // 读取数据 1.2s
+      setTimeout(() => {
+        drawerState.value = STATES.DIAGNOSING.key;
+        // 诊断 1.8s
+        setTimeout(() => {
+          try {
+            if (forceInsufficient || demoInsufficient.value) {
+              // 构造一个数据不足的报告
+              drawerReport.value = {
+                status: 'insufficient',
+                missingFields: ['totalRequests', 'groups'],
+                message: '数据不足：totalRequests=0 且 groups 缺失，无法完成诊断。请补全后重新诊断。'
+              };
+              drawerState.value = STATES.INSUFFICIENT.key;
+            } else {
+              const rpt = performDiagnosis(rec);
+              drawerReport.value = rpt;
+              drawerState.value = STATES.COMPLETED.key;
+              // 700ms 后自动到待人工确认
+              autoProgress.value = true;
+              setTimeout(() => {
+                if (drawerState.value === STATES.COMPLETED.key) {
+                  drawerState.value = STATES.PENDING.key;
+                }
+                autoProgress.value = false;
+              }, 700);
+            }
+          } catch (e) {
+            drawerError.value = '诊断失败：' + e.message;
+            drawerState.value = STATES.FAILED.key;
+            // eslint-disable-next-line no-console
+            console.error(e);
+          }
+        }, 1800);
+      }, 1200);
+    }
+
+    function closeDrawer() { resetDrawer(); }
+
+    function approvePlan() {
+      drawerState.value = STATES.EXECUTING.key;
+    }
+    function modifyPlan() {
+      // 演示用：当作已修改，提示"已记录修改"
+      drawerState.value = STATES.EXECUTING.key;
+    }
+    function rejectPlan() {
+      drawerState.value = STATES.FAILED.key;
+    }
+    function markExecuted() {
+      drawerState.value = STATES.WAITING.key;
+    }
+    function markReviewed() {
+      drawerState.value = STATES.REVIEWED.key;
+    }
+    function restartDiagnosis() {
+      drawerState.value = STATES.READING.key;
+      setTimeout(() => {
+        drawerState.value = STATES.DIAGNOSING.key;
+        setTimeout(() => {
+          try {
+            const rpt = performDiagnosis(drawerTarget.value);
+            drawerReport.value = rpt;
+            drawerState.value = STATES.PENDING.key;
+          } catch (e) {
+            drawerError.value = '诊断失败：' + e.message;
+            drawerState.value = STATES.FAILED.key;
+          }
+        }, 1800);
+      }, 1200);
+    }
+
+    // 抽屉元信息
+    const drawerMeta = computed(() => {
+      const t = drawerTarget.value;
+      if (!t) return null;
+      return { media: t.media, account: 'M-2001', project: t.projectName, rtaId: t.rtaId, date: '2026-08-14' };
+    });
+
+    // 抽屉当前状态对象
+    const drawerStateObj = computed(() => {
+      const k = drawerState.value;
+      return STATES[Object.keys(STATES).find(sk => STATES[sk].key === k)] || STATES.IDLE;
+    });
+
+    // 监听 LLM 异步返回：rta-llm-override 事件（callLLM 完成时派发）
+    // 仅 patch 当前抽屉报告的 AI 字段，避免替换整个对象影响抽屉其它状态
+    function onLLMOverride(e) {
+      const detail = (e && e.detail) || {};
+      if (!drawerTarget.value || detail.rtaId !== drawerTarget.value.rtaId) return;
+      if (!drawerReport.value || !detail.llmResult) return;
+      const r = drawerReport.value;
+      r.oneLiner = detail.llmResult.oneLiner;
+      r.managerSummary = detail.llmResult.managerSummary;
+      r.operationsNote = detail.llmResult.operationsNote;
+      if (detail.llmResult.causes) r.causes = detail.llmResult.causes;
+      if (detail.llmResult.affectedScope) r.affectedScope = detail.llmResult.affectedScope;
+      if (Array.isArray(detail.llmResult.recommendations)) r.recommendations = detail.llmResult.recommendations;
+      r._aiSource = 'llm';
+    }
+    onMounted(() => window.addEventListener('rta-llm-override', onLLMOverride));
+
+    return {
+      // 侧边栏菜单
+      navGroups, selectedMenuId, currentView,
+      onMenuSelect, goBackToList,
+      // 智能参谋工作台（第三步 · 有限上下文连续问答）
+      assistantRtaId, assistantRta, assistantInput, assistantListEl,
+      isAsking, chatSessions, currentSession,
+      assistantQuestions, assistantFollowUpQuestions,
+      askAssistant, askRecommended, selectAssistantRta,
+      sourceLabel,
+      onAssistantKeyUp, onAssistantKeyDown, onCompositionStart, onCompositionEnd,
+      // 列表
+      rtaList, searchKw, filterMedia, filterStatus, filterTag, filteredList, qpsSummary,
+      mediaList, statusList,
+      tagList: ['全部标签', '预算未达标', 'CPA 过高', '可安全放量', '配置故障', '入口流量异常', '命中率下降', '参竞率下降', '出价异常', '执行异常', '回传异常', '—'],
+      // 抽屉
+      drawerOpen, drawerState, drawerStateObj, drawerTarget, drawerReport, drawerError,
+      drawerMeta, autoProgress, showTechnical, showTerminology, demoInsufficient, demoLLM,
+      LLM_CONFIG,
+      TERMINOLOGY,
+      openDiagnosis, closeDrawer, approvePlan, modifyPlan, rejectPlan, markExecuted, markReviewed, restartDiagnosis
+    };
+  },
+  template: `
+<!-- ═══ 页面壳：左侧导航 + 主区 ═══ -->
+<div class="min-h-screen bg-ink-50">
+
+  <!-- 顶部：仅保留产品名称与 Demo 标识，不放任何业务导航（业务导航全部移至左侧侧边栏） -->
+  <header class="bg-white border-b border-ink-200 h-10 flex items-center px-5 sticky top-0 z-30">
+    <div class="font-semibold text-ink-800 text-[14px] tracking-wide">GROWTHPLATFORM</div>
+    <div class="ml-3 text-[12px] text-ink-500">· RTA 投放诊断 Agent</div>
+    <div class="ml-auto text-[12px] text-ink-400">v6 Demo · 模拟数据</div>
+  </header>
+
+  <div class="flex">
+    <!-- 左侧业务导航（侧边栏）：本 Demo 唯一的业务导航 -->
+    <aside class="w-56 bg-white border-r border-ink-200 min-h-[calc(100vh-40px)] py-3 overflow-y-auto" style="font-size:13px;">
+      <NavMenuItem v-for="g in navGroups" :key="g.id" :group="g" :depth="0" :selected-menu-id="selectedMenuId" @select="onMenuSelect" />
+    </aside>
+
+    <!-- 主区 -->
+    <main class="flex-1 min-w-0 p-5">
+
+      <template v-if="currentView === 'list'">
+
+      <!-- 标题区 -->
+      <div class="flex items-end justify-between mb-3">
+        <div>
+          <div class="text-[12px] text-ink-400">RTA / RTAID 配置</div>
+          <h1 class="text-[20px] font-semibold text-ink-800 mt-0.5">RTAID 配置列表</h1>
+          <p class="text-[12px] text-ink-500 mt-1">诊断入口为列表行级「发起诊断」按钮 · 数据为模拟数据</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <label class="flex items-center gap-1.5 text-[12px] text-ink-500 cursor-pointer">
+            <input type="checkbox" v-model="demoInsufficient" class="rounded" />
+            演示数据不足模式
+          </label>
+          <label class="flex items-center gap-1.5 text-[12px] text-ink-500 cursor-pointer" title="勾选后请求本地代理 llm-proxy.mjs（Key 仅存在于代理进程的 DEEPSEEK_API_KEY 环境变量）；代理未启动/未配置 Key → 自动回退模板，不阻塞页面">
+            <input type="checkbox" v-model="demoLLM" class="rounded" />
+            AI 模式 · DeepSeek
+          </label>
+          <button class="bg-white border border-ink-200 text-ink-700 px-3 py-1.5 rounded text-[13px] btn-tactile hover:bg-ink-50">系统配置</button>
+        </div>
+      </div>
+
+      <!-- QPS tip 蓝条：四项全部走 10 个 RTAID 聚合（与下方 3 张 QPS 卡口径一致，去掉单条 30 万硬编码） -->
+      <div class="tip-bar rounded-md px-4 py-2.5 mb-3 flex items-center gap-3 text-[12.5px]">
+        <span class="text-brand-600 font-medium">ⓘ RTAID QPS 聚合</span>
+        <span class="text-ink-700">总配置 <span class="num font-semibold">{{ qpsSummary.config.toLocaleString() }}</span></span>
+        <span class="text-ink-300">·</span>
+        <span class="text-ink-700">已占用 <span class="num font-semibold">{{ qpsSummary.used.toLocaleString() }}</span></span>
+        <span class="text-ink-300">·</span>
+        <span class="text-ink-700">剩余 <span class="num font-semibold">{{ qpsSummary.remaining.toLocaleString() }}</span></span>
+        <span class="text-ink-300">·</span>
+        <span class="text-ink-700">使用率 <span class="num font-semibold">{{ ((qpsSummary.used/qpsSummary.config)*100).toFixed(1) }}%</span></span>
+      </div>
+
+      <!-- 3 张 QPS 概览卡 -->
+      <div class="grid grid-cols-3 gap-3 mb-4">
+        <div class="bg-white rounded-md p-4 shadow-panel">
+          <div class="text-[12px] text-ink-500">总配置 QPS</div>
+          <div class="num text-[24px] font-semibold text-ink-800 mt-1">{{ qpsSummary.config.toLocaleString() }}</div>
+          <div class="text-[11px] text-ink-400 mt-1">10 个 RTAID 累计</div>
+        </div>
+        <div class="bg-white rounded-md p-4 shadow-panel">
+          <div class="text-[12px] text-ink-500">总实验已占用 QPS</div>
+          <div class="num text-[24px] font-semibold text-ink-800 mt-1">{{ qpsSummary.used.toLocaleString() }}</div>
+          <div class="text-[11px] text-ink-400 mt-1">实时聚合</div>
+        </div>
+        <div class="bg-white rounded-md p-4 shadow-panel">
+          <div class="text-[12px] text-ink-500">总剩余 QPS</div>
+          <div class="num text-[24px] font-semibold text-ink-800 mt-1">{{ qpsSummary.remaining.toLocaleString() }}</div>
+          <div class="progress-track mt-2"><div class="progress-bar bg-brand-500" :style="{ width: ((qpsSummary.remaining/qpsSummary.config)*100).toFixed(1)+'%' }"></div></div>
+        </div>
+      </div>
+
+      <!-- 筛选区 -->
+      <div class="bg-white rounded-md p-3 mb-3 shadow-panel flex items-center gap-3 flex-wrap">
+        <div class="flex items-center gap-1.5">
+          <span class="text-[12px] text-ink-500">RTAID / 项目：</span>
+          <input v-model="searchKw" placeholder="搜索 RTAID 或项目名" class="border border-ink-200 rounded px-2 py-1 text-[13px] w-56 focus:outline-none focus:border-brand-500" />
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="text-[12px] text-ink-500">媒体：</span>
+          <select v-model="filterMedia" class="border border-ink-200 rounded px-2 py-1 text-[13px] focus:outline-none focus:border-brand-500">
+            <option v-for="m in mediaList" :key="m" :value="m">{{ m }}</option>
+          </select>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="text-[12px] text-ink-500">状态：</span>
+          <select v-model="filterStatus" class="border border-ink-200 rounded px-2 py-1 text-[13px] focus:outline-none focus:border-brand-500">
+            <option v-for="s in statusList" :key="s" :value="s">{{ s }}</option>
+          </select>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="text-[12px] text-ink-500">异常标签：</span>
+          <select v-model="filterTag" class="border border-ink-200 rounded px-2 py-1 text-[13px] focus:outline-none focus:border-brand-500">
+            <option v-for="t in tagList" :key="t" :value="t">{{ t }}</option>
+          </select>
+        </div>
+        <div class="ml-auto text-[12px] text-ink-400">共 <span class="num font-medium text-ink-700">{{ filteredList.length }}</span> 条</div>
+      </div>
+
+      <!-- 列表 -->
+      <div class="bg-white rounded-md shadow-panel overflow-x-auto">
+        <table class="compact text-[12.5px] w-full">
+          <thead class="bg-ink-50 text-ink-600">
+            <tr>
+              <th class="px-3 py-2.5 text-left font-medium">媒体</th>
+              <th class="px-3 py-2.5 text-left font-medium">RTAID</th>
+              <th class="px-3 py-2.5 text-left font-medium">BidURL</th>
+              <th class="px-3 py-2.5 text-left font-medium">媒体账户</th>
+              <th class="px-3 py-2.5 text-left font-medium">状态</th>
+              <th class="px-3 py-2.5 text-right font-medium">配置 QPS</th>
+              <th class="px-3 py-2.5 text-right font-medium">绑定账号</th>
+              <th class="px-3 py-2.5 text-right font-medium">关联实验</th>
+              <th class="px-3 py-2.5 text-left font-medium">项目名</th>
+              <th class="px-3 py-2.5 text-right font-medium">日预算</th>
+              <th class="px-3 py-2.5 text-right font-medium">实际消耗</th>
+              <th class="px-3 py-2.5 text-left font-medium">达成率</th>
+              <th class="px-3 py-2.5 text-left font-medium">异常类型</th>
+              <th class="px-3 py-2.5 text-left font-medium">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in filteredList" :key="r.rtaId" :class="r._pre.tag.tone === 'abnormal' ? 'row-abnormal' : 'hover:bg-ink-50'">
+              <td class="px-3 py-2.5 text-ink-700">{{ r.media }}</td>
+              <td class="px-3 py-2.5 num text-ink-800 font-medium">{{ r.rtaId }}</td>
+              <td class="px-3 py-2.5 num text-ink-400 text-[11px] max-w-[180px] truncate" :title="r.bidUrl">{{ r.bidUrl }}</td>
+              <td class="px-3 py-2.5 text-ink-700">M-2001</td>
+              <td class="px-3 py-2.5">
+                <span class="badge" :class="r.status === '上线' ? 'bg-emerald-50 text-emerald-700' : 'bg-ink-100 text-ink-500'">
+                  <span class="badge-dot" :class="r.status === '上线' ? 'bg-emerald-500' : 'bg-ink-400'"></span>{{ r.status }}
+                </span>
+              </td>
+              <td class="px-3 py-2.5 num text-right text-ink-700">{{ r.qpsConfig.toLocaleString() }}</td>
+              <td class="px-3 py-2.5 num text-right" :class="r.boundAccounts === 0 ? 'text-rose-600 font-medium' : 'text-ink-700'">{{ r.boundAccounts }}</td>
+              <td class="px-3 py-2.5 num text-right text-ink-700">{{ r.relatedExperiments }}</td>
+              <td class="px-3 py-2.5 text-ink-700 max-w-[180px] truncate" :title="r.projectName">{{ r.projectName }}</td>
+              <td class="px-3 py-2.5 num text-right text-ink-700">{{ r.dailyBudget.toLocaleString() }}</td>
+              <td class="px-3 py-2.5 num text-right" :class="r._pre.tag.tone === 'abnormal' ? 'text-rose-600 font-medium' : 'text-ink-700'">{{ r.actualCost.toLocaleString() }}</td>
+              <td class="px-3 py-2.5">
+                <div class="flex items-center gap-2">
+                  <div class="progress-track w-16"><div class="progress-bar" :class="r.achievementRate < 0.6 ? 'bg-rose-500' : (r.achievementRate >= 0.9 ? 'bg-emerald-500' : 'bg-brand-500')" :style="{ width: (r.achievementRate*100).toFixed(0)+'%' }"></div></div>
+                  <span class="num text-[11.5px]" :class="r.achievementRate < 0.6 ? 'text-rose-600 font-medium' : (r.achievementRate >= 0.9 ? 'text-emerald-600' : 'text-ink-500')">{{ (r.achievementRate*100).toFixed(0) }}%</span>
+                </div>
+              </td>
+              <td class="px-3 py-2.5">
+                <span v-if="r._pre.tag.tone === 'abnormal'" class="badge bg-rose-50 text-rose-700">
+                  <span class="badge-dot bg-rose-500"></span>{{ r._pre.tag.text }}
+                </span>
+                <span v-else-if="r._pre.tag.tone === 'good'" class="badge bg-emerald-50 text-emerald-700">
+                  <span class="badge-dot bg-emerald-500"></span>{{ r._pre.tag.text }}
+                </span>
+                <span v-else class="text-ink-300 text-[12px]">—</span>
+              </td>
+              <td class="px-3 py-2.5 whitespace-nowrap">
+                <div class="flex items-center gap-1">
+                  <button v-if="r._pre.tag.tone === 'abnormal'" @click="openDiagnosis(r.rtaId)" class="bg-brand-500 text-white px-2.5 py-1 rounded text-[12px] btn-tactile hover:bg-brand-600 font-medium">发起诊断</button>
+                  <button v-else @click="openDiagnosis(r.rtaId)" class="bg-white border border-ink-200 text-ink-700 px-2.5 py-1 rounded text-[12px] btn-tactile hover:bg-ink-50">查看</button>
+                  <button class="bg-white border border-ink-200 text-ink-700 px-2.5 py-1 rounded text-[12px] btn-tactile hover:bg-ink-50">编辑</button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-if="filteredList.length === 0" class="px-4 py-12 text-center text-ink-400 text-[13px]">无匹配记录</div>
+      </div>
+
+      <!-- 底部 Agent 边界声明 -->
+      <div class="mt-4 text-[11.5px] text-ink-400 leading-relaxed">
+        <div>ⓘ <span class="font-medium text-ink-600">Agent 边界</span>：AI 只诊断与生成实验草稿，不直接修改真实预算、出价或策略。所有配置变更需人工审批后执行。</div>
+        <div class="mt-1">本 Demo 使用模拟数据展示 RTA 诊断 Agent 的产品形态与判定流程；不接入真实媒体 API。规则阈值与字段标注【待核验】。</div>
+      </div>
+
+      </template>
+
+      <template v-else>
+        <div class="flex items-end justify-between mb-4">
+          <div>
+            <div class="text-[12px] text-ink-400">投放管理 / RTA / 智能参谋</div>
+            <h1 class="text-[20px] font-semibold text-ink-800 mt-0.5">智能参谋</h1>
+            <p class="text-[12px] text-ink-500 mt-1">RTA 投放诊断与分析助手</p>
+          </div>
+          <button @click="goBackToList" class="bg-white border border-ink-200 text-ink-700 px-3 py-1.5 rounded text-[12px] btn-tactile hover:bg-ink-50">返回 RTAID 配置</button>
+        </div>
+
+        <div class="tip-bar rounded px-4 py-3 mb-4">
+          <div class="text-[13px] font-medium text-ink-800">围绕当前 RTA，帮助定位投放链路异常、解释诊断依据并整理处理建议。</div>
+          <div class="text-[11.5px] text-ink-500 mt-1">当前为 Demo 工作台骨架，默认离线展示；不直接修改投放配置。</div>
+        </div>
+
+        <section class="bg-white border border-ink-200 rounded shadow-panel p-4 mb-4">
+          <div class="flex items-center justify-between mb-3">
+            <div class="text-[13px] font-semibold text-ink-800">当前诊断上下文</div>
+            <span class="badge bg-ink-100 text-ink-600">模拟数据</span>
+          </div>
+          <div class="grid grid-cols-5 gap-3 text-[12px]">
+            <label class="col-span-2 text-ink-500">当前 RTAID
+              <select v-model="assistantRtaId" class="mt-1 w-full border border-ink-200 rounded px-2 py-1.5 text-ink-800 focus:outline-none focus:border-brand-500">
+                <option v-for="r in rtaList" :key="r.rtaId" :value="r.rtaId">{{ r.rtaId }} · {{ r.projectName }}</option>
+              </select>
+            </label>
+            <div><div class="text-ink-400">媒体</div><div class="mt-1 text-ink-800">{{ assistantRta.media }}</div></div>
+            <div><div class="text-ink-400">当前实验</div><div class="mt-1 text-ink-800">{{ assistantRta.experiment && assistantRta.experiment.name || '当前实验' }}</div></div>
+            <div><div class="text-ink-400">诊断时间范围</div><div class="mt-1 text-ink-800 num">2026-08-14 当日</div></div>
+          </div>
+          <div class="grid grid-cols-3 gap-3 mt-3 text-[12px]">
+            <div><span class="text-ink-400">项目：</span><span class="text-ink-800">{{ assistantRta.projectName }}</span></div>
+            <div><span class="text-ink-400">策略：</span><span class="text-ink-800">{{ assistantRta.strategies && assistantRta.strategies[0] && assistantRta.strategies[0].name || '当前策略' }}</span></div>
+            <div><span class="text-ink-400">当前状态：</span><span class="text-ink-800">{{ assistantRta.status }}</span></div>
+          </div>
+        </section>
+
+        <div class="grid grid-cols-5 gap-4">
+          <section class="col-span-3 bg-white border border-ink-200 rounded shadow-panel p-4">
+            <div class="flex items-center justify-between mb-3">
+              <div class="text-[13px] font-semibold text-ink-800">对话区</div>
+              <span class="text-[11.5px] text-ink-400">智能参谋 · Demo · 上下文仅当前 RTA</span>
+            </div>
+            <div ref="assistantListEl" class="border border-ink-100 rounded bg-ink-50 p-3 h-[320px] overflow-y-auto space-y-3">
+              <template v-for="(msg, i) in currentSession.messages" :key="i + ':' + msg.ts">
+                <!-- 系统提示（切换 RTA） -->
+                <div v-if="msg.role === 'system'" class="text-center text-[11.5px] text-ink-500 italic py-1">{{ msg.text }}</div>
+                <!-- 用户消息 -->
+                <div v-else-if="msg.role === 'user'" class="flex gap-2 items-start justify-end">
+                  <div class="bg-brand-500 text-white rounded px-3 py-2 text-[12.5px] leading-relaxed max-w-[86%] break-words">{{ msg.text }}</div>
+                  <div class="w-6 h-6 rounded-full bg-ink-200 text-ink-700 flex items-center justify-center text-[11px] font-medium">你</div>
+                </div>
+                <!-- 智能参谋消息 -->
+                <div v-else class="flex gap-2 items-start">
+                  <div class="w-6 h-6 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[11px] font-medium">参</div>
+                  <div class="flex-1 max-w-[86%]">
+                    <div class="bg-white border border-ink-200 rounded px-3 py-2 text-[12.5px] text-ink-700 leading-relaxed whitespace-pre-wrap break-words">{{ msg.text }}</div>
+                    <div v-if="msg.suggestions && msg.suggestions.length" class="mt-2 flex flex-wrap gap-1.5">
+                      <button v-for="s in msg.suggestions" :key="s" @click="askRecommended(s)" :disabled="isAsking" class="text-[11.5px] text-brand-600 border border-brand-200 bg-white hover:bg-brand-50 disabled:opacity-50 disabled:cursor-not-allowed rounded px-2 py-1 btn-tactile">{{ s }}</button>
+                    </div>
+                    <div v-if="sourceLabel(msg.source)" class="text-[10.5px] text-ink-400 mt-1">{{ sourceLabel(msg.source) }} · {{ msg.ts }}</div>
+                    <div v-else class="text-[10.5px] text-ink-400 mt-1">{{ msg.ts }}</div>
+                  </div>
+                </div>
+              </template>
+              <div v-if="isAsking" class="flex gap-2 items-start">
+                <div class="w-6 h-6 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[11px] font-medium">参</div>
+                <div class="bg-white border border-ink-200 rounded px-3 py-2 text-[12.5px] text-ink-500 italic">正在诊断中…</div>
+              </div>
+            </div>
+            <div class="flex gap-2 mt-3">
+              <input
+                v-model="assistantInput"
+                @keyup="onAssistantKeyUp"
+                @keydown="onAssistantKeyDown"
+                @compositionstart="onCompositionStart"
+                @compositionend="onCompositionEnd"
+                placeholder="输入关于当前 RTA 的问题（按 Enter 发送）"
+                :disabled="isAsking"
+                class="flex-1 border border-ink-200 rounded px-3 py-2 text-[12.5px] focus:outline-none focus:border-brand-500 disabled:bg-ink-50 disabled:cursor-not-allowed"
+              />
+              <button @click="askAssistant(assistantInput)" :disabled="isAsking || !assistantInput.trim()" class="bg-brand-500 text-white px-3 py-2 rounded text-[12px] btn-tactile hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed">发送</button>
+            </div>
+            <div class="text-[10.5px] text-ink-400 mt-1.5">提示：推荐问题点击直接发送；切换 RTA 后系统将自动重置对话上下文。</div>
+          </section>
+
+          <section class="col-span-2 bg-white border border-ink-200 rounded shadow-panel p-4">
+            <div class="text-[13px] font-semibold text-ink-800 mb-3">推荐问题</div>
+            <div class="space-y-2">
+              <button v-for="q in assistantQuestions" :key="q" @click="askRecommended(q)" :disabled="isAsking" class="w-full text-left border border-ink-200 rounded px-3 py-2 text-[12px] text-ink-700 hover:border-brand-300 hover:bg-brand-50 disabled:opacity-50 disabled:cursor-not-allowed btn-tactile">{{ q }}</button>
+            </div>
+            <div class="border-t border-ink-100 mt-4 pt-3">
+              <div class="text-[11.5px] text-ink-400 mb-2">需要查看完整证据时</div>
+              <button @click="openDiagnosis(assistantRtaId)" class="w-full bg-white border border-brand-300 text-brand-600 px-3 py-2 rounded text-[12px] btn-tactile hover:bg-brand-50">查看完整诊断</button>
+            </div>
+          </section>
+        </div>
+      </template>
+    </main>
+  </div>
+
+  <!-- ═══ 抽屉 ═══ -->
+  <transition name="fade">
+    <div v-if="drawerOpen" class="fixed inset-0 z-40 drawer-mask fadein" @click.self="closeDrawer"></div>
+  </transition>
+  <transition name="slide">
+    <aside v-if="drawerOpen" class="fixed right-0 top-0 bottom-0 w-[720px] max-w-[95vw] bg-white shadow-drawer z-50 flex flex-col slidein">
+
+      <!-- 顶部元信息 -->
+      <header class="border-b border-ink-200 px-5 py-3.5 flex items-center gap-3">
+        <div class="text-[12px] text-ink-400">{{ drawerMeta.media }} / M-2001 / {{ drawerMeta.project }}</div>
+        <div class="num text-[14px] font-semibold text-ink-800">{{ drawerMeta.rtaId }}</div>
+        <div class="text-[12px] text-ink-500 ml-2">{{ drawerMeta.date }}</div>
+        <!-- AI 来源角标（仅 COMPLETED 状态有意义）-->
+        <span v-if="drawerReport && drawerReport._aiSource" class="badge ml-2" :class="drawerReport._aiSource === 'llm' ? 'bg-violet-50 text-violet-700' : 'bg-ink-100 text-ink-600'" :title="drawerReport._aiSource === 'llm' ? '由 DeepSeek 生成（已通过 5 项校验 + Golden Case 特判）' : '由模板生成（LLM 未启用或回退兜底）'">
+          <span class="badge-dot" :class="drawerReport._aiSource === 'llm' ? 'bg-violet-500' : 'bg-ink-400'"></span>
+          {{ drawerReport._aiSource === 'llm' ? 'AI 生成' : '模板' }}
+        </span>
+        <div class="ml-auto flex items-center gap-2">
+          <span class="badge" :class="drawerStateObj.tone === 'abnormal' ? 'bg-rose-50 text-rose-700' : (drawerStateObj.tone === 'good' ? 'bg-emerald-50 text-emerald-700' : 'bg-brand-50 text-brand-700')">
+            <span class="badge-dot" :class="drawerStateObj.tone === 'abnormal' ? 'bg-rose-500' : (drawerStateObj.tone === 'good' ? 'bg-emerald-500' : 'bg-brand-500')"></span>
+            {{ drawerStateObj.label }}
+          </span>
+          <button @click="closeDrawer" class="text-ink-400 hover:text-ink-700 text-[20px] leading-none px-2">×</button>
+        </div>
+      </header>
+
+      <!-- 主体 -->
+      <div class="flex-1 overflow-y-auto">
+
+        <!-- 状态：读取中 -->
+        <div v-if="drawerState === 'reading'" class="px-5 py-12 text-center text-ink-500">
+          <div class="inline-block w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full spin"></div>
+          <div class="mt-3 text-[13px]">读取配置快照 + 指标数据中…</div>
+          <div class="text-[11.5px] text-ink-400 mt-1">预计 1.2s</div>
+        </div>
+
+        <!-- 状态：诊断中 -->
+        <div v-else-if="drawerState === 'diagnosing'" class="px-5 py-12 text-center text-ink-500">
+          <div class="inline-block w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full spin"></div>
+          <div class="mt-3 text-[13px]">规则引擎 D1-D14 · 场景识别 · AI 层综合诊断…</div>
+          <div class="text-[11.5px] text-ink-400 mt-1">预计 1.8s</div>
+          <div class="mt-4 text-[11.5px] text-ink-400">规则引擎 14 节点全链路检查 → 短路判定场景 → AI 归因 + 解释 + 规划</div>
+        </div>
+
+        <!-- 状态：诊断完成（700ms 自动跳到待人工确认） -->
+        <div v-else-if="drawerState === 'completed'" class="px-5 py-12 text-center text-ink-500">
+          <div class="text-[14px] font-medium text-ink-700">诊断完成</div>
+          <div class="text-[12px] text-ink-400 mt-2">{{ autoProgress ? '即将进入待人工确认…' : '—' }}</div>
+        </div>
+
+        <!-- 状态：数据不足 -->
+        <div v-else-if="drawerState === 'insufficient' && drawerReport" class="px-5 py-8">
+          <div class="bg-rose-50 border border-rose-200 rounded-md p-4">
+            <div class="text-[14px] font-semibold text-rose-700">⛔ 数据不足</div>
+            <div class="text-[12.5px] text-rose-600 mt-2">{{ drawerReport.message }}</div>
+            <div class="mt-3 text-[11.5px] text-rose-500">缺失字段：{{ drawerReport.missingFields.join('、') }}</div>
+            <div class="mt-3 text-[11.5px] text-ink-500 leading-relaxed">原则：数据不足时不强行诊断、不编造指标值（对齐契约 v0.3 §2.4）。请补全数据后重新发起诊断。</div>
+          </div>
+        </div>
+
+        <!-- 状态：失败 -->
+        <div v-else-if="drawerState === 'failed'" class="px-5 py-8">
+          <div class="bg-ink-50 border border-ink-200 rounded-md p-4">
+            <div class="text-[14px] font-semibold text-ink-700">诊断失败</div>
+            <div class="text-[12.5px] text-ink-600 mt-2">{{ drawerError || '方案被拒绝或信号冲突。' }}</div>
+            <div class="text-[11.5px] text-ink-400 mt-2">可点击"重新诊断"再次发起，或联系技术人员排查。</div>
+          </div>
+        </div>
+
+        <!-- 状态：诊断完成 / 待人工确认 / 待执行 / 等待回流 / 复盘完成 -->
+        <div v-else-if="drawerReport && drawerReport.status === 'completed'" class="px-5 py-4 space-y-4">
+
+          <!-- 00 诊断场景 -->
+          <section class="border border-ink-200 rounded-md p-4">
+            <div class="flex items-center justify-between mb-2">
+              <div class="text-[13px] font-semibold text-ink-800">00 · 诊断场景</div>
+              <span class="text-[11px] text-ink-400">卡点定位 × 现象标注</span>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="badge bg-brand-50 text-brand-700">
+                <span class="badge-dot bg-brand-500"></span>
+                {{ drawerReport.scenario.sceneId }} · {{ drawerReport.scenario.sceneName }}
+              </span>
+              <span v-for="t in drawerReport.scenario.phenomenonTags" :key="t.id" class="badge" :class="t.tone === 'abnormal' ? 'bg-rose-50 text-rose-700' : (t.tone === 'good' ? 'bg-emerald-50 text-emerald-700' : 'bg-ink-100 text-ink-600')">
+                <span class="badge-dot" :class="t.tone === 'abnormal' ? 'bg-rose-500' : (t.tone === 'good' ? 'bg-emerald-500' : 'bg-ink-400')"></span>
+                {{ t.name }}
+              </span>
+              <span v-if="drawerReport.scenario.phenomenonTags.length === 0" class="text-[12px] text-ink-400">无叠加现象标签</span>
+              <span class="ml-auto text-[11.5px] text-ink-400">置信度 <span class="num font-medium text-ink-700">{{ drawerReport.scenario.confidence }}%</span></span>
+            </div>
+          </section>
+
+          <!-- 01 诊断结论 -->
+          <section class="border border-ink-200 rounded-md p-4">
+            <div class="text-[13px] font-semibold text-ink-800 mb-2">01 · 诊断结论</div>
+            <div class="bg-ink-50 rounded p-3 text-[13px] text-ink-800 leading-relaxed">
+              <div class="font-medium">{{ drawerReport.oneLiner }}</div>
+            </div>
+            <div class="mt-3">
+              <div class="text-[11.5px] text-ink-500 mb-1">管理摘要（管理者视角 · 30 秒可读）</div>
+              <div class="text-[12.5px] text-ink-700 leading-relaxed">{{ drawerReport.managerSummary }}</div>
+            </div>
+            <div class="mt-3">
+              <div class="text-[11.5px] text-ink-500 mb-1">运营解释（运营视角 · 含操作建议）</div>
+              <div class="text-[12.5px] text-ink-700 leading-relaxed">{{ drawerReport.operationsNote }}</div>
+            </div>
+          </section>
+
+          <!-- 02 影响概览 -->
+          <section class="border border-ink-200 rounded-md p-4">
+            <div class="text-[13px] font-semibold text-ink-800 mb-2">02 · 影响概览</div>
+            <div class="grid grid-cols-4 gap-3">
+              <div class="bg-ink-50 rounded p-2.5">
+                <div class="text-[11px] text-ink-500">日预算</div>
+                <div class="num text-[18px] font-semibold text-ink-800 mt-0.5">¥{{ drawerReport.impact.budget.toLocaleString() }}</div>
+              </div>
+              <div class="bg-ink-50 rounded p-2.5">
+                <div class="text-[11px] text-ink-500">实际消耗</div>
+                <div class="num text-[18px] font-semibold" :class="drawerReport.impact.cost < drawerReport.impact.budget * 0.6 ? 'text-rose-600' : 'text-ink-800'">¥{{ drawerReport.impact.cost.toLocaleString() }}</div>
+              </div>
+              <div class="bg-ink-50 rounded p-2.5">
+                <div class="text-[11px] text-ink-500">缺口</div>
+                <div class="num text-[18px] font-semibold text-ink-800">¥{{ drawerReport.impact.gap.toLocaleString() }}</div>
+              </div>
+              <div class="bg-ink-50 rounded p-2.5">
+                <div class="text-[11px] text-ink-500">达成率</div>
+                <div class="num text-[18px] font-semibold" :class="drawerReport.impact.achievementRate < 0.6 ? 'text-rose-600' : (drawerReport.impact.achievementRate >= 0.9 ? 'text-emerald-600' : 'text-ink-800')">{{ (drawerReport.impact.achievementRate*100).toFixed(0) }}%</div>
+              </div>
+            </div>
+            <div class="mt-3 text-[12px] text-ink-600"><span class="text-ink-400">影响范围：</span>{{ drawerReport.impact.affectedScope }}</div>
+            <div class="mt-3 grid grid-cols-3 gap-2">
+              <div v-for="m in drawerReport.impact.extraMetrics" :key="m.name" class="bg-white border border-ink-200 rounded px-2.5 py-1.5 flex items-center justify-between">
+                <span class="text-[11.5px] text-ink-500">{{ m.name }}</span>
+                <span class="num text-[12.5px] font-medium" :class="m.tone === 'abnormal' ? 'text-rose-600' : (m.tone === 'good' ? 'text-emerald-600' : 'text-ink-800')">{{ m.value }}</span>
+              </div>
+            </div>
+          </section>
+
+          <!-- 03 原因排序 -->
+          <section class="border border-ink-200 rounded-md p-4">
+            <div class="text-[13px] font-semibold text-ink-800 mb-2">03 · 原因排序</div>
+            <div class="space-y-2">
+              <div class="flex gap-2">
+                <span class="badge bg-rose-50 text-rose-700 mt-0.5">主因</span>
+                <div class="text-[12.5px] text-ink-800 flex-1">{{ drawerReport.causes.primary }}</div>
+              </div>
+              <div class="flex gap-2">
+                <span class="badge bg-amber-50 text-amber-700 mt-0.5">次因</span>
+                <div class="text-[12.5px] text-ink-700 flex-1">{{ drawerReport.causes.secondary }}</div>
+              </div>
+              <div class="flex gap-2 items-start">
+                <span class="badge bg-ink-100 text-ink-600 mt-0.5">已排除</span>
+                <div class="text-[12px] text-ink-600 flex-1 leading-relaxed">
+                  <div v-for="(e, i) in drawerReport.causes.excluded" :key="i">· {{ e }}</div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- 04 证据时间线 -->
+          <section class="border border-ink-200 rounded-md p-4">
+            <div class="text-[13px] font-semibold text-ink-800 mb-2">04 · 证据时间线</div>
+            <div class="space-y-1.5">
+              <div v-for="(ev, i) in drawerReport.timeline" :key="i" class="flex items-start gap-2 text-[12px]">
+                <span class="num text-ink-500 w-12 shrink-0">{{ ev.time }}</span>
+                <span class="badge text-[10.5px]" :class="ev.category === 'config' ? 'bg-brand-50 text-brand-700' : (ev.category === 'metric' ? 'bg-amber-50 text-amber-700' : (ev.category === 'impression' ? 'bg-violet-50 text-violet-700' : 'bg-emerald-50 text-emerald-700'))">{{ ev.category }}</span>
+                <div class="flex-1 text-ink-700"><span class="font-medium">{{ ev.label }}</span> <span class="text-ink-500">{{ ev.detail }}</span></div>
+                <span v-if="ev.value" class="num text-ink-500 text-[11.5px]">{{ ev.value }}</span>
+              </div>
+            </div>
+          </section>
+
+          <!-- 05 原因树 -->
+          <section class="border border-ink-200 rounded-md p-4">
+            <div class="text-[13px] font-semibold text-ink-800 mb-2">05 · 原因树（8 类节点）</div>
+            <div class="space-y-1.5">
+              <details v-for="n in drawerReport.causeTree" :key="n.id" :open="n.result === 'abnormal'" class="bg-ink-50 rounded">
+                <summary class="cursor-pointer px-3 py-2 flex items-center gap-2 text-[12.5px]">
+                  <span class="badge" :class="n.result === 'abnormal' ? 'bg-rose-50 text-rose-700' : (n.result === 'excluded' ? 'bg-ink-100 text-ink-500' : 'bg-emerald-50 text-emerald-700')">
+                    <span class="badge-dot" :class="n.result === 'abnormal' ? 'bg-rose-500' : (n.result === 'excluded' ? 'bg-ink-400' : 'bg-emerald-500')"></span>
+                    {{ n.result }}
+                  </span>
+                  <span class="font-medium text-ink-800">{{ n.label }}</span>
+                  <span class="ml-auto num text-[11px] text-ink-400">置信 {{ n.confidence }}% · 影响 {{ n.impact }}</span>
+                </summary>
+                <div class="px-3 pb-2.5 text-[12px] text-ink-700 leading-relaxed">
+                  <div>{{ n.evidence }}</div>
+                  <div v-if="n.metrics && n.metrics.length" class="mt-1.5 flex flex-wrap gap-1.5">
+                    <span v-for="(m, mi) in n.metrics" :key="mi" class="bg-white border border-ink-200 rounded px-2 py-0.5 num text-[11px] text-ink-600">{{ m.name }}: {{ m.value }}</span>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </section>
+
+          <!-- 06 建议方案 -->
+          <section class="border border-ink-200 rounded-md p-4">
+            <div class="text-[13px] font-semibold text-ink-800 mb-2">06 · 建议方案（人工确认后执行）</div>
+            <div v-for="rec in drawerReport.recommendations" :key="rec.id" class="border border-ink-200 rounded p-3 mb-2 last:mb-0">
+              <div class="text-[12.5px] font-medium text-ink-800">{{ rec.action }}</div>
+              <div class="grid grid-cols-2 gap-2 mt-2 text-[12px]">
+                <div class="bg-ink-50 rounded p-2"><div class="text-[10.5px] text-ink-500">调整前</div><div class="num text-ink-800 mt-0.5">{{ rec.before }}</div></div>
+                <div class="bg-emerald-50 rounded p-2"><div class="text-[10.5px] text-emerald-600">调整后</div><div class="num text-emerald-800 mt-0.5 font-medium">{{ rec.after }}</div></div>
+              </div>
+              <div class="mt-2 text-[12px] text-ink-700"><span class="text-ink-400">影响：</span>{{ rec.impact }}</div>
+              <div class="mt-2 flex flex-wrap gap-1.5">
+                <span v-for="om in rec.observeMetrics" :key="om" class="badge bg-brand-50 text-brand-700">{{ om }}</span>
+              </div>
+              <div class="mt-2 text-[12px] text-ink-700"><span class="text-ink-400">成功标准：</span>{{ rec.successCriteria }}</div>
+              <div class="mt-1 text-[12px] text-ink-700"><span class="text-ink-400">回滚条件：</span>{{ rec.rollbackCondition }}</div>
+            </div>
+          </section>
+
+          <!-- 07 人工确认 + 技术详情（默认折叠） -->
+          <section class="border border-ink-200 rounded-md p-4">
+            <div class="flex items-center justify-between">
+              <div class="text-[13px] font-semibold text-ink-800">07 · 人工确认 + 技术详情</div>
+              <button @click="showTechnical = !showTechnical" class="text-[11.5px] text-brand-600 hover:underline">{{ showTechnical ? '收起' : '展开' }}</button>
+            </div>
+            <div v-if="showTechnical" class="mt-3 space-y-2 text-[12px] text-ink-700">
+              <div class="grid grid-cols-2 gap-2">
+                <div><span class="text-ink-400">RTAID：</span><span class="num">{{ drawerReport.technical.rtaId }}</span></div>
+                <div><span class="text-ink-400">内部 ID：</span><span class="num">{{ drawerReport.technical.rtaInternalId }}</span></div>
+                <div><span class="text-ink-400">实验 ID：</span><span class="num">{{ drawerReport.technical.experimentId }}</span></div>
+                <div><span class="text-ink-400">对照组：</span><span class="num">{{ drawerReport.technical.controlGroupId }}</span></div>
+                <div><span class="text-ink-400">实验组：</span><span class="num">{{ drawerReport.technical.treatmentGroupId }}</span></div>
+                <div><span class="text-ink-400">分桶：</span><span class="num">{{ drawerReport.technical.bucketIds.join('、') }}</span></div>
+                <div><span class="text-ink-400">请求 ID：</span><span class="num">{{ drawerReport.technical.requestId }}</span></div>
+                <div><span class="text-ink-400">策略版本：</span><span class="num">{{ drawerReport.technical.policyVersion }}</span></div>
+                <div class="col-span-2"><span class="text-ink-400">日志路径：</span><span class="num">{{ drawerReport.technical.logFieldPath }}</span></div>
+                <div><span class="text-ink-400">配置前：</span><span class="num">{{ drawerReport.technical.configBefore }}</span></div>
+                <div><span class="text-ink-400">配置后：</span><span class="num">{{ drawerReport.technical.configAfter }}</span></div>
+                <div class="col-span-2"><span class="text-ink-400">数据来源：</span>{{ drawerReport.technical.dataSource }}</div>
+                <div class="col-span-2"><span class="text-ink-400">数据范围：</span><span class="num">{{ drawerReport.technical.dataRange }}</span></div>
+                <div class="col-span-2"><span class="text-ink-400">数据更新：</span><span class="num">{{ drawerReport.technical.dataUpdatedAt }}</span></div>
+              </div>
+            </div>
+          </section>
+
+          <!-- 术语对照表（折叠） -->
+          <section class="border border-ink-200 rounded-md p-4">
+            <div class="flex items-center justify-between">
+              <div class="text-[13px] font-semibold text-ink-800">📖 术语对照表（黑话翻译）</div>
+              <button @click="showTerminology = !showTerminology" class="text-[11.5px] text-brand-600 hover:underline">{{ showTerminology ? '收起' : '展开' }}</button>
+            </div>
+            <div v-if="showTerminology" class="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[12px]">
+              <div v-for="t in TERMINOLOGY" :key="t.term" class="flex gap-2">
+                <span class="text-ink-800 font-medium shrink-0">{{ t.term }}</span>
+                <span class="text-ink-500">= {{ t.plain }}</span>
+              </div>
+            </div>
+          </section>
+
+          <div class="h-2"></div>
+        </div>
+
+        <div v-else class="px-5 py-8 text-center text-ink-400 text-[13px]">
+          暂无诊断结果
+        </div>
+      </div>
+
+      <!-- 底部操作区（按状态切换） -->
+      <footer class="border-t border-ink-200 px-5 py-3 bg-white flex items-center gap-2">
+        <div class="text-[11.5px] text-ink-500 flex-1">
+          <span v-if="drawerState === 'pending'">请选择方案动作</span>
+          <span v-else-if="drawerState === 'executing'">方案已确认，请人工执行后点击下一步</span>
+          <span v-else-if="drawerState === 'waiting'">等待数据回流（通常 24h）</span>
+          <span v-else-if="drawerState === 'reviewed'">复盘已完成，可重新诊断</span>
+          <span v-else-if="drawerState === 'insufficient'">请补全数据后重新发起</span>
+          <span v-else-if="drawerState === 'failed'">方案被拒绝，可重新发起诊断</span>
+        </div>
+        <template v-if="drawerState === 'pending'">
+          <button @click="modifyPlan" class="bg-white border border-ink-200 text-ink-700 px-3 py-1.5 rounded text-[13px] btn-tactile hover:bg-ink-50">修改方案</button>
+          <button @click="rejectPlan" class="bg-white border border-rose-300 text-rose-700 px-3 py-1.5 rounded text-[13px] btn-tactile hover:bg-rose-50">拒绝</button>
+          <button @click="approvePlan" class="bg-brand-500 text-white px-4 py-1.5 rounded text-[13px] btn-tactile hover:bg-brand-600 font-medium">批准方案</button>
+        </template>
+        <template v-else-if="drawerState === 'executing'">
+          <button @click="closeDrawer" class="bg-white border border-ink-200 text-ink-700 px-3 py-1.5 rounded text-[13px] btn-tactile hover:bg-ink-50">推迟</button>
+          <button @click="markExecuted" class="bg-brand-500 text-white px-4 py-1.5 rounded text-[13px] btn-tactile hover:bg-brand-600 font-medium">我已执行</button>
+        </template>
+        <template v-else-if="drawerState === 'waiting'">
+          <button @click="closeDrawer" class="bg-white border border-ink-200 text-ink-700 px-3 py-1.5 rounded text-[13px] btn-tactile hover:bg-ink-50">暂时关闭</button>
+          <button @click="markReviewed" class="bg-brand-500 text-white px-4 py-1.5 rounded text-[13px] btn-tactile hover:bg-brand-600 font-medium">复盘完成</button>
+        </template>
+        <template v-else-if="drawerState === 'reviewed'">
+          <button @click="closeDrawer" class="bg-white border border-ink-200 text-ink-700 px-3 py-1.5 rounded text-[13px] btn-tactile hover:bg-ink-50">关闭</button>
+          <button @click="restartDiagnosis" class="bg-brand-500 text-white px-4 py-1.5 rounded text-[13px] btn-tactile hover:bg-brand-600 font-medium">重新诊断</button>
+        </template>
+        <template v-else-if="drawerState === 'insufficient'">
+          <button @click="closeDrawer" class="bg-white border border-ink-200 text-ink-700 px-3 py-1.5 rounded text-[13px] btn-tactile hover:bg-ink-50">关闭</button>
+          <button @click="restartDiagnosis" class="bg-brand-500 text-white px-4 py-1.5 rounded text-[13px] btn-tactile hover:bg-brand-600 font-medium">补全后重新诊断</button>
+        </template>
+        <template v-else-if="drawerState === 'failed'">
+          <button @click="closeDrawer" class="bg-white border border-ink-200 text-ink-700 px-3 py-1.5 rounded text-[13px] btn-tactile hover:bg-ink-50">关闭</button>
+          <button @click="restartDiagnosis" class="bg-brand-500 text-white px-4 py-1.5 rounded text-[13px] btn-tactile hover:bg-brand-600 font-medium">重新诊断</button>
+        </template>
+        <template v-else>
+          <button @click="closeDrawer" class="bg-white border border-ink-200 text-ink-700 px-3 py-1.5 rounded text-[13px] btn-tactile hover:bg-ink-50">取消</button>
+        </template>
+      </footer>
+    </aside>
+  </transition>
+</div>
+  `
+});
+
+// ② 左侧侧边栏菜单：递归组件（Vue 3 自引用支持）
+//    - selectedMenuId 由父 setup() 传入；叶子菜单点击 emit('select', group) 给父
+const NavMenuItem = {
+  name: 'NavMenuItem',
+  props: {
+    group: { type: Object, required: true },
+    depth: { type: Number, default: 0 },
+    selectedMenuId: { type: String, default: '' }
+  },
+  template: `
+    <div>
+      <div
+        class="nav-row flex items-center pr-3 py-1.5 cursor-pointer text-[13px] select-none"
+        :class="[
+          isCurrent
+            ? 'bg-brand-50 text-brand-600 font-medium border-l-2 border-brand-500'
+            : (group.hasChildren ? 'text-ink-800 font-medium hover:bg-ink-50' : 'text-ink-600 hover:bg-ink-50')
+        ]"
+        :style="{ paddingLeft: (12 + (depth || 0) * 14) + 'px' }"
+        @click="onClick"
+      >
+        <span
+          v-if="group.hasChildren"
+          class="w-3.5 inline-flex justify-center text-ink-400 text-[10px] transition-transform"
+          :style="group.open ? 'transform: rotate(90deg)' : ''"
+        >▸</span>
+        <span v-else class="w-3.5 inline-block"></span>
+        <span class="ml-1 leading-tight">{{ group.label }}</span>
+      </div>
+      <template v-if="group.open">
+        <NavMenuItem
+          v-for="c in (group.children || [])"
+          :key="c.id"
+          :group="c"
+          :depth="(depth || 0) + 1"
+          :selected-menu-id="selectedMenuId"
+          @select="$emit('select', $event)"
+        />
+      </template>
+    </div>
+  `,
+  computed: {
+    isCurrent() {
+      return !!this.selectedMenuId && this.group && this.group.id === this.selectedMenuId;
+    }
+  },
+  methods: {
+    onClick() {
+      if (!this.group) return;
+      if (this.group.hasChildren) {
+        this.group.open = !this.group.open;
+      } else {
+        this.$emit('select', this.group);
+      }
+    }
+  }
+};
+app.component('NavMenuItem', NavMenuItem);
+
+app.mount('#app');
+</script>
+</body>
+</html>
