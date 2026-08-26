@@ -1,4 +1,4 @@
-# 项目三：RTA 对象模型与字段清单 v0.1
+# RTA 对象模型与字段清单 v0.1
 
 > 数据来源：`R (2)/R/R1.txt`（RTA 基础能力）、`R (2)/R/R2.txt`（RTA 华为接入及现有功能优化 PRD）、`R (2)/R/R_connect.txt`（小米/VIVO/OPPO/荣耀 RTA 能力适配）。
 > 用途：作为 MVP 诊断规则表、Agent 输入输出结构、PRD 和数据建模的共同基础。
