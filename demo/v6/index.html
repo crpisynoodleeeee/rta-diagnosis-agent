@@ -158,7 +158,7 @@ const TERMINOLOGY = [
 /* ═══════════════════════════════════════════════════════════════════════
  * 2. Mock 数据：10 条 RTAID 配置（含 Golden Case 夏季大促）
  *    - 字段命名对齐《RTA 对象模型与字段清单》O3/O5/O7/O8/O11
- *    - 增加 Portfolio 扩展字段（日预算/实际消耗/达成率/异常类型）作为作品集层
+ *    - 增加展示扩展字段（日预算/实际消耗/达成率/异常类型）
  *    - 增加 CPA 字段（conversionCount/actualCpa/targetCpa）供 D14 与现象标签使用
  * ═══════════════════════════════════════════════════════════════════════ */
 
@@ -1509,6 +1509,534 @@ function runAiLayer(record, signals, scenario) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+ * 5.7 v0.7 Mock 只读查询层（QueryContext + evidenceId + Schema 校验）
+ *     - 只读消费当前 RTA 的合成 Mock 数据，不接真实媒体 API
+ *     - 为指标、趋势、实验组/对照组、配置变更和诊断证据生成稳定 evidenceId
+ *     - 智能参谋模板优先；LLM 可选增强时只能消费 queryResult / evidence，不自行查数
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+const QUERY_SCHEMA_VERSION = '0.7';
+
+function stableToken(s) {
+  return String(s || '').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'UNKNOWN';
+}
+
+function toDisplayValue(value, unit) {
+  if (value === undefined || value === null || value === '') return '—';
+  if (typeof value !== 'number' || !isFinite(value)) return String(value);
+  if (unit === 'percent') return (value * 100).toFixed(1) + '%';
+  if (unit === 'percent0') return (value * 100).toFixed(0) + '%';
+  if (unit === 'yuan') return value.toLocaleString('zh-CN') + ' 元';
+  if (unit === 'qps') return value.toLocaleString('zh-CN') + ' QPS';
+  if (unit === 'ms') return value.toFixed(0) + ' ms';
+  if (unit === 'count') return value.toLocaleString('zh-CN');
+  return String(value);
+}
+
+function addEvidence(list, evidenceId, type, label, path, value, text) {
+  if (!evidenceId) return;
+  list.push({
+    evidenceId,
+    type,
+    label,
+    path,
+    value,
+    text: text || (label + ' = ' + value)
+  });
+}
+
+function buildQueryContext(record, report) {
+  const evidence = [];
+  const metrics = {};
+
+  function addMetric(key, label, value, unit, path, tone) {
+    const evidenceId = 'EV-METRIC-' + stableToken(key);
+    const display = toDisplayValue(value, unit);
+    metrics[key] = { key, label, value, unit, display, tone: tone || 'normal', evidenceId };
+    addEvidence(evidence, evidenceId, 'metric', label, path, display, label + ' = ' + display);
+  }
+
+  addMetric('dailyBudget', '日预算', record.dailyBudget, 'yuan', 'record.dailyBudget');
+  addMetric('actualCost', '实际消耗', record.actualCost, 'yuan', 'record.actualCost');
+  addMetric('achievementRate', '达成率', record.achievementRate, 'percent0', 'record.achievementRate', record.achievementRate < 0.6 ? 'abnormal' : 'normal');
+  addMetric('gap', '预算缺口', (record.dailyBudget || 0) - (record.actualCost || 0), 'yuan', 'derived.dailyBudget-actualCost');
+  addMetric('currentQps', '当前 QPS', record.coreMetrics && record.coreMetrics.currentQps, 'qps', 'record.coreMetrics.currentQps');
+  addMetric('qpsConfig', '配置 QPS', record.qpsConfig, 'qps', 'record.qpsConfig');
+  addMetric('qpsUsed', '实验已占用 QPS', record.qpsUsed, 'qps', 'record.qpsUsed');
+  addMetric('qpsRemaining', '剩余 QPS', record.qpsRemaining, 'qps', 'record.qpsRemaining');
+  addMetric('qpsUsageRate', 'QPS 使用率', record.coreMetrics && record.coreMetrics.qpsUsageRate, 'percent', 'record.coreMetrics.qpsUsageRate');
+  addMetric('totalRequests', '请求总量', record.usageMetrics && record.usageMetrics.totalRequests, 'count', 'record.usageMetrics.totalRequests');
+  addMetric('hitRate', '命中率', record.usageMetrics && record.usageMetrics.hitRate, 'percent', 'record.usageMetrics.hitRate');
+  addMetric('bidRateControl', '对照组参竞率', record.usageMetrics && record.usageMetrics.bidRate && record.usageMetrics.bidRate.control, 'percent0', 'record.usageMetrics.bidRate.control');
+  addMetric('bidRateTreatment', '实验组参竞率', record.usageMetrics && record.usageMetrics.bidRate && record.usageMetrics.bidRate.treatment, 'percent0', 'record.usageMetrics.bidRate.treatment');
+  addMetric('controlGroupCost', '对照组消耗', record.budget && record.budget.controlGroupCost, 'yuan', 'record.budget.controlGroupCost');
+  addMetric('treatmentGroupCost', '实验组消耗', record.budget && record.budget.treatmentGroupCost, 'yuan', 'record.budget.treatmentGroupCost');
+  addMetric('successRate', '执行成功率', record.coreMetrics && record.coreMetrics.successRate, 'percent', 'record.coreMetrics.successRate');
+  addMetric('timeoutRate', '超时率', record.coreMetrics && record.coreMetrics.timeoutRate, 'percent', 'record.coreMetrics.timeoutRate');
+  addMetric('p99', 'P99 耗时', record.coreMetrics && record.coreMetrics.p99, 'ms', 'record.coreMetrics.p99');
+  addMetric('callbackSuccessRate', '回传成功率', record.attribution && record.attribution.callbackSuccessRate, 'percent', 'record.attribution.callbackSuccessRate');
+  addMetric('callbackLatency', '回传延迟', record.attribution && record.attribution.callbackLatency, 'ms', 'record.attribution.callbackLatency');
+  addMetric('missingFieldRate', '识别字段缺失率', record.attribution && record.attribution.missingFieldRate, 'percent', 'record.attribution.missingFieldRate');
+  addMetric('conversionCount', '转化数', record.conversionCount, 'count', 'record.conversionCount');
+  addMetric('actualCpa', '实际 CPA', record.actualCpa, 'yuan', 'record.actualCpa', record.actualCpa > record.targetCpa * 1.2 ? 'abnormal' : 'normal');
+  addMetric('targetCpa', '目标 CPA', record.targetCpa, 'yuan', 'record.targetCpa');
+
+  const trend = (Array.isArray(record.trend) ? record.trend : []).map((p, i) => {
+    const evidenceId = 'EV-TREND-' + String(i + 1).padStart(3, '0');
+    const point = {
+      evidenceId,
+      time: p.time,
+      requests: p.requests,
+      hitRate: p.hitRate,
+      bidRate: p.bidRate,
+      cost: p.cost,
+      impressionChange: p.impressionChange
+    };
+    addEvidence(
+      evidence,
+      evidenceId,
+      'trend',
+      '趋势点 ' + p.time,
+      'record.trend[' + i + ']',
+      JSON.stringify(point),
+      '趋势点 ' + p.time + '：请求 ' + toDisplayValue(p.requests, 'count') + '，命中率 ' + toDisplayValue(p.hitRate, 'percent') + '，参竞率 ' + toDisplayValue(p.bidRate, 'percent') + '，消耗 ' + toDisplayValue(p.cost, 'yuan')
+    );
+    return point;
+  });
+
+  const configChanges = (Array.isArray(record.changes) ? record.changes : []).map((c, i) => {
+    const evidenceId = 'EV-CHANGE-' + String(i + 1).padStart(3, '0');
+    const item = {
+      evidenceId,
+      time: c.time,
+      operator: c.operator,
+      object: c.object,
+      field: c.field,
+      before: c.before,
+      after: c.after
+    };
+    addEvidence(evidence, evidenceId, 'config_change', c.object + ' ' + c.field, 'record.changes[' + i + ']', c.before + ' -> ' + c.after, c.time + ' ' + c.object + ' ' + c.field + '：' + c.before + ' -> ' + c.after);
+    return item;
+  });
+  if (configChanges.length === 0) {
+    addEvidence(evidence, 'EV-CHANGE-SUMMARY', 'config_change', '配置变更汇总', 'record.changes', '0', '当前 Mock 时间范围内未记录配置变更');
+  }
+
+  const groups = (Array.isArray(record.groups) ? record.groups : []).map((g, i) => {
+    const suffix = g.groupType === 'control' ? 'CONTROL' : (g.groupType === 'treatment' ? 'TREATMENT' : String(i + 1).padStart(3, '0'));
+    const evidenceId = 'EV-GROUP-' + suffix;
+    const item = {
+      evidenceId,
+      groupId: g.groupId,
+      groupType: g.groupType,
+      buckets: g.buckets || [],
+      bucketCount: Array.isArray(g.buckets) ? g.buckets.length : 0,
+      snapshot: g.snapshot || {}
+    };
+    addEvidence(evidence, evidenceId, 'group', g.groupId || ('实验组 ' + (i + 1)), 'record.groups[' + i + ']', JSON.stringify(item), (g.groupId || '实验组') + '：' + (g.groupType || 'unknown') + '，分桶 ' + item.bucketCount + '/10');
+    return item;
+  });
+
+  const signals = runRules(record).map(s => {
+    const evidenceId = 'EV-RULE-' + s.id;
+    addEvidence(evidence, evidenceId, 'rule', s.id + ' ' + s.label, 'runRules.' + s.id, s.evidence, '[' + s.id + '] ' + s.evidence);
+    return Object.assign({ evidenceId }, s);
+  });
+
+  const sceneEvidenceId = 'EV-SCENARIO-' + (report.scenario && report.scenario.sceneId || 'UNKNOWN');
+  addEvidence(evidence, sceneEvidenceId, 'scenario', '诊断场景', 'report.scenario', report.scenario && report.scenario.sceneId, '场景=' + (report.scenario && report.scenario.sceneId) + '，置信度=' + (report.scenario && report.scenario.confidence) + '%');
+
+  const ctx = {
+    schemaVersion: QUERY_SCHEMA_VERSION,
+    rtaId: record.rtaId,
+    projectName: record.projectName,
+    media: record.media,
+    dataScope: 'current_rta_only',
+    accessMode: 'readonly_mock',
+    dataSource: 'Mock 数据（v0.7 QueryContext）',
+    timeRange: {
+      label: report.technical && report.technical.dataRange,
+      updatedAt: report.technical && report.technical.dataUpdatedAt
+    },
+    experiment: {
+      id: record.experiment && record.experiment.id,
+      name: record.experiment && record.experiment.name,
+      status: record.experiment && record.experiment.status,
+      type: record.experiment && record.experiment.type,
+      bucketMode: record.bucketMode
+    },
+    groups,
+    metrics,
+    trend,
+    configChanges,
+    diagnosisEvidence: {
+      scenarioEvidenceId: sceneEvidenceId,
+      signals,
+      abnormalRuleEvidenceIds: signals.filter(s => s.result === 'abnormal').map(s => s.evidenceId),
+      causeNodeEvidenceIds: (report.causeTree || []).map(n => 'EV-CAUSE-' + stableToken(n.category))
+    },
+    evidence
+  };
+
+  (report.causeTree || []).forEach(n => {
+    addEvidence(ctx.evidence, 'EV-CAUSE-' + stableToken(n.category), 'cause_node', n.label, 'report.causeTree.' + n.category, n.evidence, n.label + '：' + n.evidence);
+  });
+
+  ctx.dataQuality = validateQueryContextSchema(ctx);
+  return ctx;
+}
+
+function validateQueryContextSchema(ctx) {
+  const missingFields = [];
+  const schemaErrors = [];
+  const conflicts = [];
+
+  if (!ctx || typeof ctx !== 'object') return { status: 'insufficient', completeness: 0, missingFields: ['queryContext'], conflicts: [], schemaErrors: ['queryContext_not_object'], evidenceCount: 0 };
+  if (ctx.schemaVersion !== QUERY_SCHEMA_VERSION) schemaErrors.push('schemaVersion');
+  if (!ctx.rtaId) missingFields.push('rtaId');
+  if (!ctx.timeRange || !ctx.timeRange.label) missingFields.push('timeRange.label');
+  if (!ctx.experiment || !ctx.experiment.id) missingFields.push('experiment.id');
+  if (!Array.isArray(ctx.groups) || ctx.groups.length < 2) missingFields.push('groups');
+  if (!ctx.metrics || typeof ctx.metrics !== 'object') missingFields.push('metrics');
+  if (!Array.isArray(ctx.evidence) || ctx.evidence.length === 0) missingFields.push('evidence');
+
+  const evidenceIds = new Set();
+  (ctx.evidence || []).forEach(e => {
+    if (!e.evidenceId) schemaErrors.push('evidence_without_id');
+    if (evidenceIds.has(e.evidenceId)) schemaErrors.push('duplicate_evidenceId:' + e.evidenceId);
+    evidenceIds.add(e.evidenceId);
+  });
+
+  Object.keys(ctx.metrics || {}).forEach(k => {
+    const m = ctx.metrics[k];
+    if (!m.evidenceId || !evidenceIds.has(m.evidenceId)) schemaErrors.push('metric_evidence_missing:' + k);
+    if (m.value === undefined || m.value === null || (typeof m.value === 'number' && !isFinite(m.value))) missingFields.push('metrics.' + k);
+  });
+
+  (ctx.trend || []).forEach((p, i) => {
+    if (!p.evidenceId || !evidenceIds.has(p.evidenceId)) schemaErrors.push('trend_evidence_missing:' + i);
+    if (!/^\d{2}:\d{2}$/.test(String(p.time || ''))) schemaErrors.push('trend_time_format:' + i);
+    if (i > 0 && String(ctx.trend[i - 1].time || '').localeCompare(String(p.time || '')) > 0) conflicts.push('趋势时间顺序冲突：' + ctx.trend[i - 1].time + ' 晚于 ' + p.time);
+  });
+
+  (ctx.configChanges || []).forEach((c, i) => {
+    if (!c.evidenceId || !evidenceIds.has(c.evidenceId)) schemaErrors.push('change_evidence_missing:' + i);
+    if (!/^\d{2}:\d{2}$/.test(String(c.time || ''))) schemaErrors.push('change_time_format:' + i);
+  });
+
+  const m = ctx.metrics || {};
+  const dailyBudget = m.dailyBudget && m.dailyBudget.value;
+  const actualCost = m.actualCost && m.actualCost.value;
+  const achievementRate = m.achievementRate && m.achievementRate.value;
+  if (typeof dailyBudget === 'number' && dailyBudget > 0 && typeof actualCost === 'number' && typeof achievementRate === 'number') {
+    const calc = actualCost / dailyBudget;
+    if (Math.abs(calc - achievementRate) > 0.005) conflicts.push('达成率冲突：actualCost/dailyBudget=' + calc.toFixed(3) + '，record.achievementRate=' + achievementRate);
+  }
+
+  const qpsConfig = m.qpsConfig && m.qpsConfig.value;
+  const qpsUsed = m.qpsUsed && m.qpsUsed.value;
+  const qpsRemaining = m.qpsRemaining && m.qpsRemaining.value;
+  if ([qpsConfig, qpsUsed, qpsRemaining].every(v => typeof v === 'number')) {
+    const calcRemain = qpsConfig - qpsUsed;
+    if (calcRemain !== qpsRemaining) conflicts.push('QPS 剩余冲突：配置-已占用=' + calcRemain + '，记录=' + qpsRemaining);
+  }
+
+  const conversions = m.conversionCount && m.conversionCount.value;
+  const actualCpa = m.actualCpa && m.actualCpa.value;
+  if (typeof actualCost === 'number' && typeof conversions === 'number' && conversions > 0 && typeof actualCpa === 'number') {
+    const calcCpa = actualCost / conversions;
+    if (Math.abs(calcCpa - actualCpa) > 0.5) conflicts.push('CPA 冲突：actualCost/conversionCount=' + calcCpa.toFixed(1) + '，record.actualCpa=' + actualCpa);
+  }
+
+  const requiredMetricKeys = ['dailyBudget','actualCost','achievementRate','totalRequests','hitRate','bidRateControl','bidRateTreatment','actualCpa','targetCpa'];
+  const missingMetricKeys = requiredMetricKeys.filter(k => !m[k] || m[k].value === undefined || m[k].value === null);
+  missingMetricKeys.forEach(k => missingFields.push('metrics.' + k));
+
+  const totalChecks = 26;
+  const problemCount = missingFields.length + schemaErrors.length + conflicts.length;
+  const completeness = Math.max(0, Math.min(1, (totalChecks - problemCount) / totalChecks));
+  const status = conflicts.length > 0 ? 'conflict' : ((missingFields.length > 0 || schemaErrors.length > 0) ? 'insufficient' : 'ok');
+  return {
+    status,
+    completeness,
+    missingFields: Array.from(new Set(missingFields)),
+    conflicts,
+    schemaErrors,
+    evidenceCount: (ctx.evidence || []).length,
+    freshnessMinutes: 0
+  };
+}
+
+function detectOtherRtaInQuestion(question, currentRtaId) {
+  const q = String(question || '');
+  return MOCK_RTA_LIST.find(r => r.rtaId !== currentRtaId && q.indexOf(r.rtaId) >= 0) || null;
+}
+
+function metricKeysFromQuestion(question) {
+  const q = String(question || '');
+  const keys = [];
+  const add = k => { if (keys.indexOf(k) < 0) keys.push(k); };
+  if (/预算|消耗|达成率|缺口|花/.test(q)) ['dailyBudget','actualCost','gap','achievementRate'].forEach(add);
+  if (/QPS|qps/.test(q)) ['currentQps','qpsConfig','qpsUsed','qpsRemaining','qpsUsageRate'].forEach(add);
+  if (/请求/.test(q)) add('totalRequests');
+  if (/命中/.test(q)) add('hitRate');
+  if (/参竞|放行/.test(q)) ['bidRateControl','bidRateTreatment'].forEach(add);
+  if (/CPA|cpa|转化|成本/.test(q)) ['actualCpa','targetCpa','conversionCount'].forEach(add);
+  if (/回传|归因|缺失/.test(q)) ['callbackSuccessRate','callbackLatency','missingFieldRate'].forEach(add);
+  if (/执行|成功率|超时|P99|耗时/.test(q)) ['successRate','timeoutRate','p99'].forEach(add);
+  if (keys.length === 0) ['dailyBudget','actualCost','achievementRate','hitRate','bidRateControl','bidRateTreatment','actualCpa','targetCpa'].forEach(add);
+  return keys;
+}
+
+function trendMetricFromQuestion(question) {
+  const q = String(question || '');
+  if (/命中/.test(q)) return { key: 'hitRate', label: '命中率', unit: 'percent' };
+  if (/参竞|放行/.test(q)) return { key: 'bidRate', label: '参竞率', unit: 'percent' };
+  if (/消耗|花|成本/.test(q)) return { key: 'cost', label: '时段消耗', unit: 'yuan' };
+  if (/曝光/.test(q)) return { key: 'impressionChange', label: '曝光变化', unit: 'percent' };
+  return { key: 'requests', label: '请求量', unit: 'count' };
+}
+
+function ensureQueryContext(report, record) {
+  if (report && report.queryContext) return report.queryContext;
+  if (!report || report.status !== 'completed') return null;
+  return buildQueryContext(record, report);
+}
+
+function makeQueryRefusal(status, reason, detail, evidenceIds) {
+  return { status, reason, detail: detail || '', evidenceIds: evidenceIds || [], rows: [] };
+}
+
+function runAssistantQuery(question, intent, report, record) {
+  if (!report || report.status === 'insufficient') {
+    return makeQueryRefusal('insufficient', 'diagnosis_insufficient', report && report.missingFields ? report.missingFields.join('、') : '诊断数据不足', []);
+  }
+  const otherRta = detectOtherRtaInQuestion(question, record.rtaId);
+  if (otherRta) {
+    return makeQueryRefusal('refused', 'cross_rta_out_of_scope', '问题提到了其他 RTAID：' + otherRta.rtaId + '。当前参谋只允许查询当前 RTA：' + record.rtaId + '。', []);
+  }
+  const ctx = ensureQueryContext(report, record);
+  if (!ctx) return makeQueryRefusal('insufficient', 'query_context_missing', '当前报告没有可用 QueryContext。', []);
+  if (ctx.accessMode !== 'readonly_mock' || ctx.dataScope !== 'current_rta_only') {
+    return makeQueryRefusal('refused', 'scope_violation', '查询上下文不是当前 RTA 的只读 Mock 范围。', []);
+  }
+  if (ctx.dataQuality && ctx.dataQuality.status === 'conflict') {
+    return makeQueryRefusal('conflict', 'evidence_conflict', ctx.dataQuality.conflicts.join('；'), ctx.evidence.map(e => e.evidenceId));
+  }
+  if (ctx.dataQuality && ctx.dataQuality.status === 'insufficient') {
+    return makeQueryRefusal('insufficient', 'schema_insufficient', ctx.dataQuality.missingFields.concat(ctx.dataQuality.schemaErrors).join('、'), ctx.evidence.map(e => e.evidenceId));
+  }
+
+  if (intent === 'metric_query') return queryMetrics(ctx, metricKeysFromQuestion(question));
+  if (intent === 'trend_query') return queryTrend(ctx, trendMetricFromQuestion(question));
+  if (intent === 'group_compare') return queryGroupCompare(ctx);
+  if (intent === 'config_query') return queryConfigChanges(ctx);
+  if (intent === 'evidence') return queryDiagnosisEvidence(ctx);
+  if (intent === 'budget') return queryMetrics(ctx, ['dailyBudget','actualCost','gap','achievementRate','bidRateControl','bidRateTreatment']);
+  if (intent === 'attribution') return queryMetrics(ctx, ['callbackSuccessRate','callbackLatency','missingFieldRate','actualCpa','targetCpa']);
+  return null;
+}
+
+function queryMetrics(ctx, keys) {
+  const rows = [];
+  const missing = [];
+  (keys || []).forEach(k => {
+    const m = ctx.metrics[k];
+    if (!m || m.value === undefined || m.value === null || m.display === '—') missing.push(k);
+    else rows.push({ key: k, label: m.label, value: m.display, rawValue: m.value, evidenceId: m.evidenceId, tone: m.tone });
+  });
+  if (rows.length === 0) return makeQueryRefusal('insufficient', 'metric_missing', missing.join('、') || '未匹配到可查询指标', []);
+  return {
+    status: missing.length > 0 ? 'partial' : 'ok',
+    type: 'metric_query',
+    rtaId: ctx.rtaId,
+    timeRange: ctx.timeRange.label,
+    rows,
+    missing,
+    evidenceIds: rows.map(r => r.evidenceId),
+    dataSource: ctx.dataSource
+  };
+}
+
+function queryTrend(ctx, metric) {
+  const points = (ctx.trend || []).filter(p => typeof p[metric.key] === 'number');
+  if (points.length < 2) return makeQueryRefusal('insufficient', 'trend_points_lt_2', metric.label + '趋势点不足 2 个，不能做趋势对比。', points.map(p => p.evidenceId));
+  const first = points[0];
+  const last = points[points.length - 1];
+  const delta = last[metric.key] - first[metric.key];
+  const relative = first[metric.key] !== 0 ? delta / Math.abs(first[metric.key]) : null;
+  return {
+    status: 'ok',
+    type: 'trend_query',
+    rtaId: ctx.rtaId,
+    timeRange: ctx.timeRange.label,
+    metric,
+    first: { time: first.time, value: toDisplayValue(first[metric.key], metric.unit), rawValue: first[metric.key], evidenceId: first.evidenceId },
+    last: { time: last.time, value: toDisplayValue(last[metric.key], metric.unit), rawValue: last[metric.key], evidenceId: last.evidenceId },
+    delta: toDisplayValue(delta, metric.unit),
+    relative: relative === null ? '—' : (relative * 100).toFixed(1) + '%',
+    points: points.map(p => ({ time: p.time, value: toDisplayValue(p[metric.key], metric.unit), evidenceId: p.evidenceId })),
+    evidenceIds: points.map(p => p.evidenceId),
+    dataSource: ctx.dataSource
+  };
+}
+
+function queryGroupCompare(ctx) {
+  const control = (ctx.groups || []).find(g => g.groupType === 'control');
+  const treatment = (ctx.groups || []).find(g => g.groupType === 'treatment');
+  if (!control || !treatment) return makeQueryRefusal('insufficient', 'groups_missing', '缺少对照组或实验组。', []);
+  const cBid = ctx.metrics.bidRateControl;
+  const tBid = ctx.metrics.bidRateTreatment;
+  const cCost = ctx.metrics.controlGroupCost;
+  const tCost = ctx.metrics.treatmentGroupCost;
+  const rows = [
+    { label: '分桶数', control: control.bucketCount + '/10', treatment: treatment.bucketCount + '/10', evidenceIds: [control.evidenceId, treatment.evidenceId] },
+    { label: '参竞率', control: cBid.display, treatment: tBid.display, diff: ((cBid.value - tBid.value) * 100).toFixed(0) + 'pp', evidenceIds: [cBid.evidenceId, tBid.evidenceId] },
+    { label: '消耗', control: cCost.display, treatment: tCost.display, diff: toDisplayValue((tCost.value || 0) - (cCost.value || 0), 'yuan'), evidenceIds: [cCost.evidenceId, tCost.evidenceId] }
+  ];
+  return {
+    status: 'ok',
+    type: 'group_compare',
+    rtaId: ctx.rtaId,
+    timeRange: ctx.timeRange.label,
+    controlGroupId: control.groupId,
+    treatmentGroupId: treatment.groupId,
+    rows,
+    treatmentSnapshot: treatment.snapshot,
+    evidenceIds: Array.from(new Set(rows.reduce((a, r) => a.concat(r.evidenceIds || []), []))),
+    dataSource: ctx.dataSource
+  };
+}
+
+function queryConfigChanges(ctx) {
+  if (!ctx.configChanges || ctx.configChanges.length === 0) {
+    return {
+      status: 'ok',
+      type: 'config_query',
+      rtaId: ctx.rtaId,
+      timeRange: ctx.timeRange.label,
+      rows: [],
+      evidenceIds: ['EV-CHANGE-SUMMARY'],
+      dataSource: ctx.dataSource,
+      emptyMessage: '当前 Mock 时间范围内未查到配置变更记录。'
+    };
+  }
+  return {
+    status: 'ok',
+    type: 'config_query',
+    rtaId: ctx.rtaId,
+    timeRange: ctx.timeRange.label,
+    rows: ctx.configChanges.map(c => ({
+      time: c.time,
+      operator: c.operator,
+      object: c.object,
+      field: c.field,
+      before: c.before,
+      after: c.after,
+      evidenceId: c.evidenceId
+    })),
+    evidenceIds: ctx.configChanges.map(c => c.evidenceId),
+    dataSource: ctx.dataSource
+  };
+}
+
+function queryDiagnosisEvidence(ctx) {
+  const abnormal = (ctx.diagnosisEvidence && ctx.diagnosisEvidence.signals || []).filter(s => s.result === 'abnormal');
+  const keyTimeline = (ctx.trend || []).slice(0, 2).concat((ctx.trend || []).slice(-2));
+  return {
+    status: 'ok',
+    type: 'evidence_query',
+    rtaId: ctx.rtaId,
+    timeRange: ctx.timeRange.label,
+    abnormalRules: abnormal.map(s => ({ id: s.id, label: s.label, evidence: s.evidence, evidenceId: s.evidenceId })),
+    configChanges: ctx.configChanges || [],
+    keyTimeline,
+    evidenceIds: Array.from(new Set([ctx.diagnosisEvidence.scenarioEvidenceId].concat(abnormal.map(s => s.evidenceId), (ctx.configChanges || []).map(c => c.evidenceId), keyTimeline.map(p => p.evidenceId)))),
+    dataSource: ctx.dataSource
+  };
+}
+
+function evidenceSuffix(result) {
+  const ids = result && result.evidenceIds || [];
+  return ids.length ? '\n\n证据引用：' + ids.join('、') : '';
+}
+
+function buildQueryAnswer(queryResult, intent, report, record) {
+  if (!queryResult) return null;
+  if (queryResult.status === 'conflict') {
+    return {
+      text: '我拒绝给出确定性查询结论：当前 QueryContext 存在证据冲突。\n\n冲突项：' + queryResult.detail + '\n\n处理方式：请先人工核对 Mock 数据或重新生成数据快照；在冲突解除前，不输出趋势、组间对比或配置归因结论。'
+    };
+  }
+  if (queryResult.status === 'insufficient') {
+    return {
+      text: '当前数据不足，不能可靠回答这个查询。\n\n不足项：' + queryResult.detail + '\n\n我不会补齐或猜测缺失指标。'
+    };
+  }
+  if (queryResult.status === 'refused') {
+    return {
+      text: '这个查询被拒绝：' + queryResult.detail + '\n\n当前 V0.7 只支持当前 RTA（' + record.rtaId + '）在 Mock 数据范围内的只读查询。'
+    };
+  }
+  if (queryResult.type === 'metric_query') {
+    const body = queryResult.rows.map(r => '• ' + r.label + '：' + r.value + '（' + r.evidenceId + '）').join('\n');
+    const partial = queryResult.status === 'partial' ? '\n\n部分字段不足：' + queryResult.missing.join('、') : '';
+    return {
+      text: '指标查询结果（当前 RTA：' + queryResult.rtaId + '；范围：' + queryResult.timeRange + '）：\n\n' + body + partial + evidenceSuffix(queryResult),
+      suggestions: ['趋势怎么变化', '对照组和实验组对比', '配置变更记录是什么']
+    };
+  }
+  if (queryResult.type === 'trend_query') {
+    const points = queryResult.points.map(p => p.time + ' ' + p.value + '（' + p.evidenceId + '）').join('；');
+    return {
+      text:
+        '趋势对比（' + queryResult.metric.label + '，当前 RTA：' + queryResult.rtaId + '）：\n\n' +
+        '• 首点：' + queryResult.first.time + ' = ' + queryResult.first.value + '（' + queryResult.first.evidenceId + '）\n' +
+        '• 末点：' + queryResult.last.time + ' = ' + queryResult.last.value + '（' + queryResult.last.evidenceId + '）\n' +
+        '• 变化：' + queryResult.delta + '，相对变化 ' + queryResult.relative + '\n' +
+        '• 明细：' + points + evidenceSuffix(queryResult),
+      suggestions: ['配置变更记录是什么', '对照组和实验组对比']
+    };
+  }
+  if (queryResult.type === 'group_compare') {
+    const body = queryResult.rows.map(r => '• ' + r.label + '：对照组 ' + r.control + ' vs 实验组 ' + r.treatment + (r.diff ? '，差值 ' + r.diff : '') + '（证据 ' + r.evidenceIds.join('、') + '）').join('\n');
+    return {
+      text:
+        '实验组/对照组对比（' + queryResult.controlGroupId + ' vs ' + queryResult.treatmentGroupId + '）：\n\n' +
+        body + '\n\n实验组配置快照：' + JSON.stringify(queryResult.treatmentSnapshot || {}) + evidenceSuffix(queryResult),
+      suggestions: ['配置变更记录是什么', '诊断结论的依据是什么']
+    };
+  }
+  if (queryResult.type === 'config_query') {
+    if (!queryResult.rows.length) {
+      return { text: queryResult.emptyMessage + evidenceSuffix(queryResult), suggestions: ['当前指标是多少', '趋势怎么变化'] };
+    }
+    const body = queryResult.rows.map(c => '• ' + c.time + '，' + c.operator + ' 将 ' + c.object + ' 的 ' + c.field + ' 从 ' + c.before + ' 改为 ' + c.after + '（' + c.evidenceId + '）').join('\n');
+    return {
+      text: '配置变更查询结果：\n\n' + body + evidenceSuffix(queryResult),
+      suggestions: ['趋势怎么变化', '诊断结论的依据是什么']
+    };
+  }
+  if (queryResult.type === 'evidence_query') {
+    const abnormal = queryResult.abnormalRules.length
+      ? queryResult.abnormalRules.map(s => '• ' + s.id + ' ' + s.label + '：' + s.evidence + '（' + s.evidenceId + '）').join('\n')
+      : '• 未发现 abnormal 规则节点';
+    const changes = queryResult.configChanges.length
+      ? queryResult.configChanges.map(c => '• ' + c.time + ' ' + c.field + ' ' + c.before + ' -> ' + c.after + '（' + c.evidenceId + '）').join('\n')
+      : '• 无配置变更事件（EV-CHANGE-SUMMARY）';
+    return {
+      text:
+        '证据查询结果（当前 RTA：' + queryResult.rtaId + '）：\n\n' +
+        '1) 异常规则：\n' + abnormal + '\n\n' +
+        '2) 配置证据：\n' + changes + '\n\n' +
+        '数据来源：' + queryResult.dataSource + '\n数据范围：' + queryResult.timeRange + evidenceSuffix(queryResult),
+      suggestions: ['建议怎么调整', '对照组和实验组对比']
+    };
+  }
+  return null;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
  * 6. 完整诊断流程：组装 DiagnosisReport
  * ═══════════════════════════════════════════════════════════════════════ */
 
@@ -1577,7 +2105,7 @@ function performDiagnosis(record) {
     dataUpdatedAt: '2026-08-14 13:30:00'
   };
 
-  return {
+  const completedReport = {
     status: 'completed',
     scenario,
     causeTree,
@@ -1591,6 +2119,11 @@ function performDiagnosis(record) {
     technical,
     _aiSource: ai._source || 'template'
   };
+  const queryContext = buildQueryContext(record, completedReport);
+  completedReport.queryContext = queryContext;
+  completedReport.dataQuality = queryContext.dataQuality;
+  completedReport.evidenceRefs = queryContext.evidence.map(e => e.evidenceId);
+  return completedReport;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1607,11 +2140,15 @@ function performDiagnosis(record) {
 //   - observation 排在 recommendation 之前，让"调整后观察什么"落到 observation 而非 recommendation
 const ASSISTANT_INTENT_KEYWORDS = [
   ['rollback',       /回滚|撤回|什么时候回|什么情况下回|还原/],
+  ['config_query',   /配置变更|变更记录|改了什么|谁改|什么时候改|调整记录|历史变更/],
+  ['group_compare',  /对照组|实验组|AB|A\/B|组.*对比|对比.*组|实验.*对照/],
+  ['trend_query',    /趋势|拐点|从.*到|变化了多少|下降了多少|上升了多少|时间.*对比|对比.*时间/],
   ['observation',    /观察什么|看什么|观察.*指标|监控|趋势|追踪|哪些指标/],
   ['recommendation', /建议|怎么调|怎么改|调整|方案|处置|怎么办/],
   ['overview',       /异常|什么问题|什么情况|怎么了|状态|咋/],
   ['budget',         /预算|消耗|达不|没跑|花不|达率|消费/],
   ['attribution',    /回传|归因|回调|链路|缺失率|丢失/],
+  ['metric_query',   /指标|QPS|qps|CPA|cpa|命中率|参竞率|请求量|成功率|超时率|P99|转化数|当前.*多少/],
   ['evidence',       /依据|因果|主因|怎么判断|怎么得出/],
   ['excluded',       /排除|其他原因|不是.*原因|否定/]
 ];
@@ -1628,14 +2165,15 @@ function classifyAssistantIntent(q) {
 }
 
 // 9 类模板回答 + insufficient / execute_refuse / out_of_scope 三个特殊分支
-function buildAssistantTemplateAnswer(question, intent, report, record) {
+function buildAssistantTemplateAnswer(question, intent, report, record, queryResult) {
   if (report.status === 'insufficient') return buildInsufficientAnswer(report);
   if (intent === 'execute_refuse') return buildExecuteRefuse();
   if (intent === 'out_of_scope') return buildOutOfScope(report, record);
+  if (intent === 'metric_query' || intent === 'trend_query' || intent === 'group_compare' || intent === 'config_query') return buildQueryAnswer(queryResult || runAssistantQuery(question, intent, report, record), intent, report, record);
   if (intent === 'overview') return buildOverview(report, record);
-  if (intent === 'budget') return buildBudget(report, record);
-  if (intent === 'attribution') return buildAttribution(report, record);
-  if (intent === 'evidence') return buildEvidence(report);
+  if (intent === 'budget') return buildBudget(report, record, queryResult);
+  if (intent === 'attribution') return buildAttribution(report, record, queryResult);
+  if (intent === 'evidence') return buildEvidence(report, queryResult);
   if (intent === 'excluded') return buildExcluded(report);
   if (intent === 'recommendation') return buildRecommendation(report);
   if (intent === 'observation') return buildObservation(report);
@@ -1675,10 +2213,15 @@ function buildOverview(report, record) {
   };
 }
 
-function buildBudget(report, record) {
+function buildBudget(report, record, queryResult) {
+  if (queryResult && (queryResult.status === 'conflict' || queryResult.status === 'insufficient' || queryResult.status === 'refused')) {
+    return buildQueryAnswer(queryResult, 'budget', report, record);
+  }
   const imp = report.impact;
   const metrics = (imp.extraMetrics || []).filter(m => /参竞|请求/.test(m.name));
   const metricsStr = metrics.map(m => m.name + ' ' + m.value).join('、');
+  const qr = queryResult || runAssistantQuery('预算 消耗 达成率 参竞率', 'budget', report, record);
+  const refs = qr && qr.evidenceIds && qr.evidenceIds.length ? '\n\n证据引用：' + qr.evidenceIds.join('、') : '';
   return {
     text:
       '预算与消耗情况：\n\n' +
@@ -1687,14 +2230,19 @@ function buildBudget(report, record) {
       '• 达成率：' + (imp.achievementRate*100).toFixed(0) + '%\n' +
       '• 差额：' + imp.gap + ' 元\n\n' +
       '主要原因（来自 DiagnosisReport.causes.primary）：' + report.causes.primary + '\n\n' +
-      '因果链：' + (metricsStr ? '关键指标 ' + metricsStr + '，' : '') + '直接导致预算未达标。',
+      '因果链：' + (metricsStr ? '关键指标 ' + metricsStr + '，' : '') + '直接导致预算未达标。' + refs,
     suggestions: ['诊断结论的依据是什么', '建议怎么调整', '还有哪些原因已排除']
   };
 }
 
-function buildAttribution(report, record) {
+function buildAttribution(report, record, queryResult) {
+  if (queryResult && (queryResult.status === 'conflict' || queryResult.status === 'insufficient' || queryResult.status === 'refused')) {
+    return buildQueryAnswer(queryResult, 'attribution', report, record);
+  }
   const attributionNode = report.causeTree.find(n => n.category === 'attribution');
   const ar = record.attribution || {};
+  const qr = queryResult || runAssistantQuery('回传 归因 CPA', 'attribution', report, record);
+  const refs = qr && qr.evidenceIds && qr.evidenceIds.length ? '\n\n证据引用：' + qr.evidenceIds.join('、') : '';
   if (report.scenario.sceneId === 'S6' || (attributionNode && attributionNode.result === 'abnormal')) {
     return {
       text:
@@ -1703,7 +2251,7 @@ function buildAttribution(report, record) {
         '• 回传延迟：' + ar.callbackLatency + ' ms\n' +
         '• 字段缺失率：' + (ar.missingFieldRate*100).toFixed(1) + '%\n\n' +
         '影响：归因数据可信度下降，转化数据可能被低估，会进一步影响 CPA 判定（D14）和现象标签。\n\n' +
-        '异常归因原因（来自诊断报告 causes.primary）：' + (report.causes.primary || '—'),
+        '异常归因原因（来自诊断报告 causes.primary）：' + (report.causes.primary || '—') + refs,
       suggestions: ['诊断结论的依据是什么', '建议怎么调整']
     };
   }
@@ -1713,15 +2261,20 @@ function buildAttribution(report, record) {
       '• 回传成功率：' + (ar.callbackSuccessRate*100).toFixed(1) + '%\n' +
       '• 回传延迟：' + ar.callbackLatency + ' ms\n' +
       '• 字段缺失率：' + (ar.missingFieldRate*100).toFixed(1) + '%\n\n' +
-      '判定依据：回传归因节点（causeTree category=attribution）结果为 normal；当前不是 S6 场景。'
+      '判定依据：回传归因节点（causeTree category=attribution）结果为 normal；当前不是 S6 场景。' + refs
   };
 }
 
-function buildEvidence(report) {
+function buildEvidence(report, queryResult) {
+  if (queryResult && (queryResult.status === 'conflict' || queryResult.status === 'insufficient' || queryResult.status === 'refused')) {
+    return buildQueryAnswer(queryResult, 'evidence', report, { rtaId: report.technical && report.technical.rtaId });
+  }
   const configEvents = report.timeline.filter(e => e.category === 'config');
   const configStr = configEvents.map(e => e.time + ' ' + e.label + (e.value ? ' (' + e.value + ')' : '')).join('\n  ');
   const abnormalNodes = report.causeTree.filter(n => n.result === 'abnormal');
   const abnormalStr = abnormalNodes.map(n => '  • ' + n.label + ' [' + n.category + '] · ' + n.evidence).join('\n');
+  const qr = queryResult || (report.queryContext ? queryDiagnosisEvidence(report.queryContext) : null);
+  const refs = qr && qr.evidenceIds && qr.evidenceIds.length ? '\n\n证据引用：' + qr.evidenceIds.join('、') : '';
   return {
     text:
       '诊断依据来自以下三个层次（全部来自 DiagnosisReport）：\n\n' +
@@ -1730,7 +2283,7 @@ function buildEvidence(report) {
       '3) 原因树异常节点：\n' + (abnormalStr || '  （无异常节点）') + '\n\n' +
       '数据来源：' + report.technical.dataSource + '\n' +
       '数据范围：' + report.technical.dataRange + '\n' +
-      '数据更新：' + report.technical.dataUpdatedAt,
+      '数据更新：' + report.technical.dataUpdatedAt + refs,
     suggestions: ['建议怎么调整', '调整后观察什么']
   };
 }
@@ -1818,8 +2371,8 @@ function collectReportNumbers(report, record) {
 }
 
 // 助手 LLM 通道（顶层 · 纯函数）：独立 prompt + 校验；复用 LLM_CONFIG
-function buildAssistantPrompt(question, intent, report, record) {
-  const systemPrompt = '你是 RTA 投放诊断智能参谋的问答助手。给定当前 RTA 的结构化诊断事实（DiagnosisReport），用简洁的中文回答用户问题。要求：\n1. 只基于输入事实回答，不编造指标、不补充不存在的原因或建议\n2. 数值必须从输入事实中读取，不允许修改或编造\n3. 主因和建议必须与 DiagnosisReport 一致\n4. 区分 9 类问题意图，结构化分小节，简洁\n5. 当问题超出当前能力（其他 RTA、行业大盘、跨时间范围），明确说明当前只能回答当前 RTA 在当前数据范围内的问题\n6. 拒绝直接执行（提价、加预算、换素材等）的请求：必须说明只能诊断和建议，不能执行\n7. 输出 JSON 严格遵守字段名，必须包含 rtaId / intent / answer 三个字段';
+function buildAssistantPrompt(question, intent, report, record, queryResult) {
+  const systemPrompt = '你是 RTA 投放诊断智能参谋的问答助手。给定当前 RTA 的结构化诊断事实（DiagnosisReport）和只读查询结果（QueryResult，如有），用简洁的中文回答用户问题。要求：\n1. 只基于输入事实回答，不编造指标、不补充不存在的原因或建议\n2. 数值必须从输入 facts 或 queryResult 中读取，不允许修改或编造\n3. 主因和建议必须与 DiagnosisReport 一致\n4. 对指标/趋势/组间/配置变更查询，优先消费 queryResult，并在回答中保留 evidenceId\n5. 当问题超出当前能力（其他 RTA、行业大盘、跨时间范围），明确说明当前只能回答当前 RTA 在当前数据范围内的问题\n6. 拒绝直接执行（提价、加预算、换素材等）的请求：必须说明只能诊断和建议，不能执行\n7. 输出 JSON 严格遵守字段名，必须包含 rtaId / intent / answer 三个字段';
   const userPayload = {
     intent, rtaId: record.rtaId,
     rtaContext: {
@@ -1837,6 +2390,8 @@ function buildAssistantPrompt(question, intent, report, record) {
       recommendations: report.recommendations,
       technical: report.technical
     },
+    queryResult: queryResult || null,
+    evidenceCatalog: report.queryContext ? (report.queryContext.evidence || []).slice(0, 30).map(e => ({ evidenceId: e.evidenceId, type: e.type, label: e.label, text: e.text })) : [],
     constraints: '当前 RTA = ' + record.rtaId + '；所有引用必须来自该 RTA 的事实；不允许引用其他 RTA；不允许直接执行任何操作。'
   };
   const userPrompt = '输入（JSON）：\n' + JSON.stringify(userPayload, null, 2) + '\n\n请输出 JSON（严格遵守字段名）：\n{\n  "rtaId": "' + record.rtaId + '",\n  "intent": "' + intent + '",\n  "answer": "分类回答内容（中文，分小节，简洁，150-400 字）"\n}\n\n只返回 JSON，不要 Markdown 包裹。rtaId 必须等于输入中的 rtaId，intent 必须等于输入中的 intent。';
@@ -1845,7 +2400,7 @@ function buildAssistantPrompt(question, intent, report, record) {
 
 // LLM 输出一致性校验（顶层 · 纯函数）
 // 原则：DiagnosisReport 是唯一事实源；无法确认一致时拒绝，宁可回退模板
-function validateAssistantOutput(output, intent, report, record) {
+function validateAssistantOutput(output, intent, report, record, queryResult) {
   if (!output || typeof output !== 'object') return { ok: false, reason: 'not_object' };
   // rtaId 必须等于当前 record.rtaId
   if (typeof output.rtaId !== 'string' || output.rtaId !== record.rtaId) {
@@ -1922,12 +2477,25 @@ function validateAssistantOutput(output, intent, report, record) {
     }
   }
 
+  // v0.7 查询型回答：必须引用当前 QueryContext 中的 evidenceId
+  if (intent === 'metric_query' || intent === 'trend_query' || intent === 'group_compare' || intent === 'config_query' || intent === 'evidence') {
+    const allowedEvidence = new Set((report.queryContext && report.queryContext.evidence || []).map(e => e.evidenceId));
+    const queryEvidence = new Set((queryResult && queryResult.evidenceIds || []));
+    const refs = answer.match(/EV-[A-Z0-9_-]+/g) || [];
+    if (refs.length === 0) return { ok: false, reason: 'query_answer_missing_evidence_ref' };
+    for (const ref of refs) {
+      if (!allowedEvidence.has(ref) && !queryEvidence.has(ref)) {
+        return { ok: false, reason: 'unknown_evidence_ref:' + ref };
+      }
+    }
+  }
+
   return { ok: true };
 }
 
-async function callAssistantLLM(question, intent, report, record) {
+async function callAssistantLLM(question, intent, report, record, queryResult) {
   if (!LLM_CONFIG.enabled) return null;
-  const { systemPrompt, userPrompt } = buildAssistantPrompt(question, intent, report, record);
+  const { systemPrompt, userPrompt } = buildAssistantPrompt(question, intent, report, record, queryResult);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), LLM_CONFIG.timeoutMs);
   let resp, text;
@@ -1959,7 +2527,7 @@ async function callAssistantLLM(question, intent, report, record) {
   if (!content) return null;
   let assistantJson;
   try { assistantJson = JSON.parse(content); } catch (e) { return null; }
-  const v = validateAssistantOutput(assistantJson, intent, report, record);
+  const v = validateAssistantOutput(assistantJson, intent, report, record, queryResult);
   if (!v.ok) return null;
   return { text: assistantJson.answer, suggestions: [], source: 'llm' };
 }
@@ -1973,23 +2541,29 @@ async function answerAssistantQuestion(question, report, record, llmEnabled) {
   if (!q) return { ok: false, reason: 'empty', intent: 'empty' };
   const intent = classifyAssistantIntent(q);
   if (intent === 'empty') return { ok: false, reason: 'empty', intent };
+  const queryResult = runAssistantQuery(q, intent, report, record);
 
   // execute_refuse / out_of_scope / 数据不足 → 不调 LLM，直接用确定性模板
-  const skipLLM = (intent === 'execute_refuse' || intent === 'out_of_scope' || report.status === 'insufficient');
+  const skipLLM = (
+    intent === 'execute_refuse' ||
+    intent === 'out_of_scope' ||
+    report.status === 'insufficient' ||
+    (queryResult && (queryResult.status === 'conflict' || queryResult.status === 'insufficient' || queryResult.status === 'refused'))
+  );
 
   let answer = null;
   if (llmEnabled && !skipLLM && report.status === 'completed') {
     try {
-      answer = await callAssistantLLM(q, intent, report, record);
+      answer = await callAssistantLLM(q, intent, report, record, queryResult);
     } catch (e) {
       answer = null; // 网络/超时/异常 → 回退模板
     }
   }
   if (!answer) {
-    const tpl = buildAssistantTemplateAnswer(q, intent, report, record);
+    const tpl = buildAssistantTemplateAnswer(q, intent, report, record, queryResult);
     answer = { text: tpl.text, suggestions: tpl.suggestions || [], source: 'template' };
   }
-  return { ok: true, intent, answer };
+  return { ok: true, intent, answer, queryResult };
 }
 
 // 顶层纯函数：裁剪消息列表，保留首条欢迎语 + 所有 system 消息 + 最近 maxTurns 轮（user+assistant 成对）

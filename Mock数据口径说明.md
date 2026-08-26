@@ -42,6 +42,21 @@
 | 日预算 / 实际消耗 / 预算达成率 | 项目层业务指标，构成触发条件（达成率 = 消耗/预算）|
 | Golden Case 数值 | 预算 1000 / 消耗 300 / 门槛 40%→80% 为构造的模拟案例，用于验证链路与评测 |
 | conversionCount / actualCpa / targetCpa | Demo 补充字段（CPA 现象标签用），口径为通用定义 |
+| QueryContext / evidenceId | v0.7 查询层扩展对象，用于把当前 RTA 的指标、趋势、组间、配置变更和诊断证据统一编号 |
+
+## 3.1 v0.7 QueryContext 口径
+
+`QueryContext` 由 `performDiagnosis(record)` 基于同一条 Mock RTA 记录和 `DiagnosisReport` 程序化生成，不引入新数据源。
+
+| 类型 | evidenceId 示例 | 来源 |
+| --- | --- | --- |
+| 指标 | `EV-METRIC-ACTUALCPA` / `EV-METRIC-DAILYBUDGET` | Mock 记录中的 `coreMetrics` / `usageMetrics` / `budget` / CPA 字段 |
+| 趋势 | `EV-TREND-001` | Mock 记录中的 `trend[]` |
+| 配置变更 | `EV-CHANGE-001` | Mock 记录中的 `changes[]` |
+| 实验组/对照组 | `EV-GROUP-CONTROL` / `EV-GROUP-TREATMENT` | Mock 记录中的 `groups[]` |
+| 规则证据 | `EV-RULE-D9` | 规则引擎 `runRules(record)` 输出 |
+
+这些编号只用于 Demo 内证据回指，不是生产日志 ID。查询层只允许读取当前 RTA 的 Mock `QueryContext`，不做跨 RTA 历史、不查行业大盘、不访问真实媒体 API。
 
 ## 4. 待核验字段【待核验】
 
@@ -55,4 +70,4 @@
 
 ## 5. 公开数据声明
 
-Demo 数据全部为合成 Mock 数据。字段名、页面结构和部分阈值依据公开可讨论的产品结构抽象；项目层预算、消耗和达成率是为覆盖预算诊断场景增加的 Demo 扩展对象。媒体侧不确定字段保留原名并标记【待核验】，真实接入前必须完成字段和指标口径核验。Golden Case 是构造案例，用于验证诊断链路和 AI 输出评测。
+Demo 数据全部为合成 Mock 数据。字段名、页面结构和部分阈值依据公开可讨论的产品结构抽象；项目层预算、消耗和达成率是为覆盖预算诊断场景增加的 Demo 扩展对象。v0.7 QueryContext 只是在 Mock 数据上增加只读索引和证据编号，不代表真实报表或媒体接口联调。媒体侧不确定字段保留原名并标记【待核验】，真实接入前必须完成字段和指标口径核验。Golden Case 是构造案例，用于验证诊断链路和 AI 输出评测。

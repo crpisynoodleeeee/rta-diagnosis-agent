@@ -71,9 +71,11 @@ DiagnosisReport + 人工确认状态
 ### 3.1 进入 AI 层前（v0.7 增强项）
 
 - 检查必填字段、时间顺序、数值类型和单位。
-- 为每条证据生成稳定的 `evidenceId`，例如 `EV-001`；v0.6 当前使用节点和事件字段直接回指。
+- 为每条证据生成稳定的 `evidenceId`，例如 `EV-RULE-D9`、`EV-CHANGE-001`、`EV-METRIC-ACTUALCPA`。
 - 标记数据新鲜度、缺失字段和冲突字段。
 - 如果规则引擎没有可用异常节点，直接进入“未发现明确异常”分支，不调用 LLM。
+
+v0.7 Demo 已落地 `QueryContext`：在 `performDiagnosis(record)` 输出中附加 `queryContext`、`dataQuality` 和 `evidenceRefs`，统一当前 RTA 的指标、趋势、实验组/对照组、配置变更和诊断证据。所有查询证据使用稳定 `EV-*` 编号；查询层只读、只消费合成 Mock 数据，不触发真实媒体 API。
 
 ### 3.2 AI 层内部阶段
 
@@ -87,6 +89,8 @@ DiagnosisReport + 人工确认状态
 - 检查结论中的数字、时间、配置前后值是否存在于输入证据。
 - 检查推荐动作是否越过“只读诊断”边界。
 - v0.6 当前由模板优先和 LLM 5 项校验保障；后续增加完整 JSON Schema 校验时，失败结果统一返回模板化降级结果，不展示未经校验的 LLM 原文。
+
+v0.7 Demo 的查询型回答增加额外校验：若 LLM 输出指标、趋势、组间对比或配置变更结论，必须引用当前 QueryContext 中存在的 `EV-*` evidenceId；缺少证据引用或引用未知证据时，丢弃 LLM 输出并回退模板。
 
 ---
 
@@ -171,13 +175,12 @@ interface Recommendation {
 }
 ```
 
-v0.7 计划在输入证据编号和 Schema 校验落地后扩展以下字段：
+v0.7 已落地输入证据编号和 QueryContext Schema 校验。当前诊断报告附加 `evidenceRefs`；`confidence` 与 `status` 仍作为后续 AI 质量扩展字段预留：
 
 ```ts
 interface AILayerQualityExtension {
   evidenceRefs: string[]
-  confidence: number
-  status: "complete" | "partial" | "insufficient_evidence"
+  // confidence/status：后续 AI 质量扩展字段，当前不作为前端契约字段
 }
 ```
 
@@ -193,7 +196,8 @@ interface AILayerQualityExtension {
 | causes.excluded | 每条排除项附对应证据，不能只列结论 |
 | affectedScope | 由实验、分桶、流量或账户范围证据推导 |
 | recommendations | 必须包含 action、before、after、observeMetrics、successCriteria、rollbackCondition |
-| evidenceRefs / confidence / status | v0.7 扩展字段；v0.6 由模板和人工确认状态承担同等边界，不作为当前前端字段 |
+| evidenceRefs | v0.7 已落地；由 QueryContext 生成的 `EV-*` 证据编号组成 |
+| confidence / status | 后续 AI 质量扩展字段；当前由 `dataQuality`、模板降级和人工确认状态承担边界 |
 
 `recommendations[].before` 必须对应当前生效值，`after` 必须来自允许调整的配置范围。不得把历史变更的 `before` 值误写成当前值，不得生成自动执行指令。
 
@@ -321,7 +325,7 @@ Mock 参考实现和真实 LLM 使用同一输入集、同一 Schema、同一评
 | 阶段 | 状态 | AI 层能力 |
 | --- | --- | --- |
 | v0.6 Demo | 当前 | Mock 数据、模板参考实现、离线评测和只读展示 |
-| v0.7 | 下一阶段 | 可查询 Mock 数据、证据编号、Schema 校验、拒答和降级 |
+| v0.7 | 已落地 | 可查询 Mock 数据、证据编号、Schema 校验、拒答和降级 |
 | v0.8 | 后续 | 接入受控只读媒体工具，支持趋势、实验组和配置变更查询 |
 | v1.0 | 目标 | 真实 LLM、离线回归集、线上质量监控和人工确认闭环 |
 

@@ -35,6 +35,17 @@
 | 4 | 处理管线加场景识别层 | Phase 1.5：detectScenario(signals, m) → scenario，位于规则引擎与 AI 层之间 |
 | 5 | §3.3 causes 的 excluded 语义确认 | 已确认为"normal 节点排除表述"，与 v6 实现一致 |
 
+### v0.3 → v0.4（2026-08-26）
+
+基于 v0.7 Demo 的 Mock 只读查询层，新增查询上下文与证据编号扩展：
+
+| # | 变更 | 原因 |
+| --- | --- | --- |
+| 1 | `DiagnosisReport` 新增 `queryContext` | 智能参谋需要在当前 RTA Mock 数据范围内查询指标、趋势、组间、配置变更和证据 |
+| 2 | `DiagnosisReport` 新增 `dataQuality` | Schema 校验、数据不足和证据冲突需要结构化返回 |
+| 3 | `DiagnosisReport` 新增 `evidenceRefs` | 回答中的数字、时间和配置值需要回指稳定 `EV-*` evidenceId |
+| 4 | 助手查询型回答新增证据约束 | LLM 查询回答必须引用合法 `EV-*` evidenceId，否则回退模板 |
+
 ---
 
 ## 1. 契约总览
@@ -59,7 +70,7 @@
                               ▼
 ┌─ 输出（DiagnosisReport）─────────────────────────────────────────┐
 │ scenario / oneLiner / managerSummary / impact / causes / timeline │
-│ causeTree / recommendations / technical / status                 │
+│ causeTree / recommendations / technical / queryContext / status   │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -290,6 +301,36 @@ causeTree 节点与诊断规则 D1-D12 映射：
 - 卡点定位：D1-D5 任一 abnormal → S0；否则按 D7→D8→D9→D11→D10→D12 顺序短路；全 normal → S7。
 - 现象标注（叠加）：达成率 <60% → P_BUDGET；actualCpa > targetCpa × 1.2 → P_CPA_HIGH（D14 判定）；达成率 ≥90% 且 CPA 达标 → P_SAFE_SCALE。
 - D14 是现象维度，**不进 S0-S7 短路链**。
+
+### 3.9 v0.7 查询扩展（queryContext / dataQuality / evidenceRefs）
+
+`queryContext` 是当前 RTA 的只读 Mock 查询上下文，由 `performDiagnosis(record)` 生成，不接真实媒体 API。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| schemaVersion | string | 当前为 `0.7` |
+| rtaId / projectName / media | string | 当前所选 RTA 上下文 |
+| dataScope | string | 固定为 `current_rta_only` |
+| accessMode | string | 固定为 `readonly_mock` |
+| timeRange | { label, updatedAt } | Mock 数据范围和更新时间 |
+| experiment | object | 当前实验 ID、名称、状态、分桶方式 |
+| groups | QueryGroup[] | 对照组/实验组、分桶和配置快照 |
+| metrics | Record<string, QueryMetric> | 可查询指标，每项带 `evidenceId` |
+| trend | QueryTrendPoint[] | 可查询趋势点，每点带 `evidenceId` |
+| configChanges | QueryChange[] | 配置变更记录，每条带 `evidenceId` |
+| diagnosisEvidence | object | 规则、场景和异常证据索引 |
+| evidence | EvidenceItem[] | 全量证据目录 |
+| dataQuality | object | Schema 状态、缺失字段、冲突字段、证据数量 |
+
+`evidenceRefs` 为 `queryContext.evidence[].evidenceId` 的扁平数组，供回答校验和展示使用。证据编号格式为 `EV-*`，例如 `EV-METRIC-ACTUALCPA`、`EV-TREND-001`、`EV-CHANGE-001`、`EV-RULE-D9`。
+
+查询层拒答规则：
+
+- `dataQuality.status = conflict`：拒绝给出确定性结论，列出冲突项；
+- 关键字段缺失或 Schema 错误：返回数据不足，不编造指标；
+- 趋势点少于 2 个：拒绝趋势对比；
+- 问题提到非当前 RTAID：拒绝跨 RTA 查询；
+- 查询型 LLM 输出不含合法 `EV-*`：丢弃 LLM 输出并回退模板。
 
 ---
 

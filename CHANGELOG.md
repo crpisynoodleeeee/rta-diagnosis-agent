@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.7.0 - Unreleased
+
+### Added
+
+- QueryContext Mock data layer with stable `evidenceId` references.
+- Read-only assistant queries for current-RTA metrics, trend comparison, control/treatment comparison, configuration changes and diagnosis evidence.
+- QueryContext Schema validation with missing-data and evidence-conflict refusal paths.
+- LLM assistant validation for query answers: query responses must cite valid `EV-*` evidence IDs or fall back to templates.
+- `_verify_v07.cjs` validation script covering 30 query-layer cases.
+
+### Boundaries
+
+- Querying remains limited to the selected RTA and synthetic Mock data.
+- No real media API, production data, write operation, budget change or automated execution is introduced.
+- Cross-RTA history, industry benchmarks and real-time media status remain out of scope.
+
 ## v0.6.0 - 2026-08-23
 
 ### Added
@@ -22,4 +38,4 @@
 
 ## Next
 
-The next planned iteration is queryable Mock data plus tool-using diagnosis Copilot. It will remain read-only and will not include real media API execution.
+The next planned iteration is real LLM-backed analysis and controlled tool-use evaluation. It will remain evidence-constrained and read-only; real media API integration requires a separate permission, field-mapping and replay-validation track.

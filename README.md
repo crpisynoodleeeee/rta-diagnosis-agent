@@ -4,6 +4,8 @@
 
 当前发布版本：`v0.6.0`（Demo v6 Final）
 
+当前开发版已加入 `v0.7` Mock 只读查询层：智能参谋可在当前 RTA、当前合成数据范围内查询指标、趋势、实验组/对照组、配置变更和证据引用。该能力仍完全基于 Mock 数据，不接真实媒体 API。
+
 ## 在线 Demo
 
 [打开 GitHub Pages Demo](https://crpisynoodleeeee.github.io/rta-diagnosis-agent/)
@@ -26,8 +28,9 @@
 | 场景识别 | S0-S7 卡点定位 + 预算未达标、CPA 过高、可安全放量标签 |
 | AI 层 | 原因排序、因果解释、实验方案、观察指标、成功标准和回滚条件 |
 | 人工控制 | 十状态工作流，AI 只生成草稿，不直接修改投放配置 |
-| 智能参谋 | 围绕当前 RTA 和当前诊断报告的受限追问与解释 |
-| 工程验证 | Golden Case、场景、LLM 安全路径和智能参谋四组验收脚本 |
+| 智能参谋 | 围绕当前 RTA 和当前诊断报告的受限追问、解释与 v0.7 Mock 查数 |
+| Mock 查询层 | QueryContext + evidenceId，支持指标、趋势、组间、配置变更和证据查询 |
+| 工程验证 | Golden Case、场景、LLM 安全路径、智能参谋和 v0.7 查询层验收脚本 |
 
 ## 架构边界
 
@@ -53,6 +56,7 @@ AI/模板诊断输出
 
 | 文档 | 用途 |
 | --- | --- |
+| [v0.7.0 发布说明草稿](docs/releases/v0.7.0.md) | Mock 查询层、证据编号和专项验收 |
 | [v0.6.0 发布说明](docs/releases/v0.6.0.md) | 当前版本、验证范围和已知限制 |
 | [PRD v0.2.1](PRD%20v0.2.1.md) | 产品范围、页面、状态机和验收标准 |
 | [Agent 输入输出结构契约 v0.3](Agent输入输出结构契约%20v0.3.md) | 输入、输出和字段契约 |
@@ -73,9 +77,10 @@ node _verify.cjs
 node _verify_scenes.cjs
 node _verify_llm.cjs
 node _verify_assistant.cjs
+node _verify_v07.cjs
 ```
 
-四组脚本覆盖 Golden Case、5 类扩展场景、10 条 LLM 路径和 47 条智能参谋用例。测试使用 Mock 数据和 Stub，不代表真实媒体接口联调或业务收益。
+五组脚本覆盖 Golden Case、5 类扩展场景、10 条 LLM 路径、47 条智能参谋用例和 30 条 v0.7 查询层用例。测试使用 Mock 数据和 Stub，不代表真实媒体接口联调或业务收益。
 
 ## 部署
 
