@@ -21,7 +21,7 @@
 ### 方式 A：双击 file:// 直接打开（最简）
 
 ```
-D:\AI_Codex\Projects\program3-r\demo\v6\index.html
+demo/v6/index.html
 ```
 
 双击即开，无需任何服务器、无需联网。
@@ -29,7 +29,7 @@ D:\AI_Codex\Projects\program3-r\demo\v6\index.html
 ### 方式 B：本地 HTTP server
 
 ```bash
-cd D:\AI_Codex\Projects\program3-r\demo\v6
+cd demo/v6
 python -m http.server 8080
 # 浏览器打开 http://localhost:8080
 ```
@@ -272,7 +272,7 @@ const ai = runAiLayer(record, signals, scenario);
 $env:DEEPSEEK_API_KEY = "sk-xxxxxx"
 
 # 2. 启动本地代理（仅绑 127.0.0.1）
-cd D:\AI_Codex\Projects\program3-r\demo\v6
+cd demo/v6
 node llm-proxy.mjs
 
 # 3. 浏览器打开 index.html（双击 file:// 或 python -m http.server 8080）
@@ -418,7 +418,7 @@ askAssistant(question)
 - AI 层：《AI 层设计与评测方案 v0.1》（§4.1 接口形状）
 - 规则表：《MVP 诊断规则表 v0.1》（D1-D13 为主规则；D14 CPA 判定由《契约 v0.3》增补，仅服务现象标签「CPA 过高」，不进 S0-S7 短路链）
 - 对象模型：《RTA 对象模型与字段清单 v0.1》（O1-O11）
-- 字段口径：《贴图与页面结构参考清单》（母版 A/B/C）
+- 字段口径：基于脱敏后的平台字段抽象；内部截图参考材料不随公开版本发布
 
 ---
 

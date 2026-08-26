@@ -24,3 +24,7 @@ Desktop.ini
 .claude/
 R (2)/
 
+# Local project materials that are not part of the public release
+docs/internal/
+docs/archive/
+

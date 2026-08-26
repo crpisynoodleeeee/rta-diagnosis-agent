@@ -1,86 +1,86 @@
-# RTA 投放诊断 Agent · 
+# RTA 投放诊断 Agent
 
-> 面向 RTA（实时竞价）投放优化的**受控 Agentic Workflow**：规则引擎确定性判定 → AI 语义归因/解释/规划 → 人工确认执行。
-> 完整 PRD + 可运行 Demo + 自动化验收 + 可评测的 AI 价值论证。
+> 面向 RTA（实时竞价）投放优化的受控 Agentic Workflow：规则引擎确定性判定 → 场景识别 → AI 归因/解释/规划 → 人工确认执行。
 
----
+当前发布版本：`v0.6.0`（Demo v6 Final）
 
-## 🎮 在线 Demo
+## 在线 Demo
 
-> 🔗 **https://github.com/crpisynoodleeeee/rta-diagnosis-agent/`**（部署后替换本行）
-> 建议 1440px 桌面视口打开；手机端会自动缩放。
+[打开 GitHub Pages Demo](https://crpisynoodleeeee.github.io/rta-diagnosis-agent/)
 
-体验路径（3 分钟）：
+建议使用桌面浏览器体验。3 分钟路径：
 
-1. 列表页第 1 行（juliang-rta-2086）红色高亮 = **Golden Case**（预算达成率 30%）；
-2. 点「发起诊断」→ 右侧抽屉依次进入 读取 → 诊断完成 → 待人工确认；
-3. 看七段式输出：主因 = **实验组准入门槛 40%→80% → 参竞率 60%→10% → 曝光/消耗下滑 → 预算未达标**；
-4. 点「批准方案」→ 走完 10 状态机（待人工执行 → 我已执行 → 复盘完成）；
-5. 左侧菜单「投放管理 > RTA > 智能参谋」→ 体验对诊断结果的受限问答（拒绝执行、超范围说明）。
+1. 打开列表页第 1 行 `juliang-rta-2086`，查看 Golden Case。
+2. 点击「发起诊断」，查看读取、诊断和待人工确认状态。
+3. 查看七段式输出：准入门槛 `40% → 80%`，参竞率 `60% → 10%`，曝光与消耗下滑。
+4. 点击「批准方案」，体验人工执行、数据回流和复盘状态。
+5. 进入「投放管理 > RTA > 智能参谋」，体验当前诊断范围内的受限问答。
 
-> 在线版走**模板模式**（完全离线、零外网依赖）。真实 LLM（DeepSeek）模式需在本地启动代理并配置 Key——前端不持有任何 Key，详见 `demo/v6/README.md` §7.7。
+在线版默认使用模板模式，完全离线运行。可选 DeepSeek 模式需要在本地启动代理；前端不保存 API Key。
 
----
+## 核心能力
 
-## 🧩 核心设计（面试叙事主线）
-
-| 设计 | 说明 |
+| 能力 | 当前实现 |
 | --- | --- |
-| **受控 Agentic Workflow** | AI 只解释原因、生成方案草稿，**不覆盖规则判定、不直接改配置**；人工确认是产品的一部分（10 状态机） |
-| **规则与 AI 的显式分工** | 规则引擎 D1-D14 回答"哪个环节出问题"（有限状态）；AI 回答"为什么、影响多大、下一步怎么验证"（开放空间）——用"能否 if-else 写尽"划界 |
-| **可评测的 AI 价值** | Golden Case 标准答案 + L1-L4 分层评测（L2 归因一票否决），同一把尺子贯穿模板与真实 LLM |
-| **安全设计** | 前端零 Key、零 Authorization 头；Key 只在本地代理进程环境变量；任意 LLM 失败静默回退模板 |
-| **工程落地** | 单文件离线 Demo（Vue UMD + Tailwind 本地化），69 项自动化断言全绿（Golden 7/7、场景 5/5、LLM 10/10、智能参谋 47/47） |
+| 规则诊断 | D1-D14 配置、流量、命中、参竞、服务、出价和归因检查 |
+| 场景识别 | S0-S7 卡点定位 + 预算未达标、CPA 过高、可安全放量标签 |
+| AI 层 | 原因排序、因果解释、实验方案、观察指标、成功标准和回滚条件 |
+| 人工控制 | 十状态工作流，AI 只生成草稿，不直接修改投放配置 |
+| 智能参谋 | 围绕当前 RTA 和当前诊断报告的受限追问与解释 |
+| 工程验证 | Golden Case、场景、LLM 安全路径和智能参谋四组验收脚本 |
 
----
+## 架构边界
 
-## 📚 文档索引
-
-| 文档 | 内容 |
-| --- | --- |
-| [`demo/v6/README.md`](demo/v6/README.md) | Demo 功能、架构、状态机、LLM 接入与安全说明（v6 唯一正式版） |
-| [PRD v0.2.1](PRD%20v0.2.1.md) | 产品需求文档：范围、母版、10 状态机、验收标准 |
-| [Agent 输入输出结构契约 v0.3](Agent输入输出结构契约%20v0.3.md) | 输入/输出/字段契约 |
-| [AI 层设计与评测方案](AI层设计与评测方案.md) | **AI 价值论证**：分工线、Golden Case、L1-L4 评测 |
-| [MVP 诊断规则表](MVP诊断规则表.md) | 规则引擎 D1-D14 阈值设计 |
-| [RTA 对象模型与字段清单](RTA对象模型与字段清单.md) | 对象模型 O1-O11 |
-| [场景扩展方案](场景扩展方案.md) | S0-S7 场景识别设计 |
-
----
-
-## 🧪 验证状态（发布前全绿）
-
-| 脚本 | 覆盖 | 结果 |
-| --- | --- | --- |
-| `_verify.cjs` | Golden Case + HTML 合规 | ✅ 7/7 |
-| `_verify_scenes.cjs` | 5 场景七段式完整性 | ✅ 5/5 |
-| `_verify_llm.cjs` | LLM 路径 10 用例（含安全静态扫描） | ✅ 10/10 |
-| `_verify_assistant.cjs` | 智能参谋 47 用例 | ✅ 47/47 |
-
-```powershell
-cd demo/v6
-node _verify.cjs; node _verify_scenes.cjs; node _verify_llm.cjs; node _verify_assistant.cjs
+```text
+ConfigSnapshot + MetricBundle
+          ↓
+规则引擎 D1-D14
+          ↓
+场景识别 S0-S7
+          ↓
+AI/模板诊断叙事
+          ↓
+人工确认与模拟复盘
 ```
 
----
+规则引擎负责确定性判定和证据收集；AI 负责解释、原因排序和方案草拟。所有展示数据均为作品集 Mock 数据，不包含真实媒体账户或公司业务数据。
 
-## 🚀 部署（GitHub Pages + 国内镜像）
+当前版本不包含真实媒体 API、自动异常监控、跨 RTA 历史查询、行业大盘、生产级权限审计或真实配置修改。
+
+完整边界见 [产品边界](docs/BOUNDARIES.md)。
+
+## 文档
+
+| 文档 | 用途 |
+| --- | --- |
+| [v0.6.0 发布说明](docs/releases/v0.6.0.md) | 当前版本、验证范围和已知限制 |
+| [PRD v0.2.1](PRD%20v0.2.1.md) | 产品范围、页面、状态机和验收标准 |
+| [Agent 输入输出结构契约 v0.3](Agent输入输出结构契约%20v0.3.md) | 输入、输出和字段契约 |
+| [AI 层设计与评测方案](AI层设计与评测方案.md) | AI 分工、Golden Case 和 L1-L4 评测 |
+| [MVP 诊断规则表](MVP诊断规则表.md) | D1-D14 规则与阈值 |
+| [RTA 对象模型与字段清单](RTA对象模型与字段清单.md) | O1-O11 对象模型 |
+| [Mock 数据口径说明](Mock数据口径说明.md) | 数据来源层级和模拟数据边界 |
+| [Demo v6 说明](demo/v6/README.md) | 功能、架构、LLM 接入和本地运行 |
+| [部署说明](docs/DEPLOYMENT.md) | GitHub Pages、本地 Demo 和发布检查 |
+| [Changelog](CHANGELOG.md) | 版本变更记录 |
+
+## 验收
+
+在 `demo/v6` 目录运行：
 
 ```powershell
-# 1. 在 GitHub 建仓后关联远端
-https://crpisynoodleeeee.github.io/rta-diagnosis-agent/
+node _verify.cjs
+node _verify_scenes.cjs
+node _verify_llm.cjs
+node _verify_assistant.cjs
+```
 
-# 2. 一键部署到 gh-pages 分支（含 demo/v6 → 仓库根）
+四组脚本覆盖 Golden Case、5 类扩展场景、10 条 LLM 路径和 47 条智能参谋用例。测试使用 Mock 数据和 Stub，不代表真实媒体接口联调或业务收益。
+
+## 部署
+
+```powershell
 .\deploy-ghpages.ps1
-
-# 3. 仓库 Settings → Pages → Source 选 gh-pages 分支 / root
 ```
 
-详细步骤（含国内镜像、二维码生成、敏感内容自查）见 [项目三-部署发布说明.md](项目三-部署发布说明.md)。
-
----
-
-## ⚠️ 说明
-
-- 所有数据为 **Mock 数据（作品集演示用途）**，不包含任何真实媒体平台账户数据；
-- Demo 内的 LLM 代理仅用于演示，真实产品中应使用服务端 secret manager
+详细步骤见 [部署说明](docs/DEPLOYMENT.md)。
