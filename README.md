@@ -6,7 +6,7 @@
 > - 对齐《AI 层设计与评测方案》§4.1 接口形状
 > - 零外网依赖 + 双击 file:// 可打开
 > - LLM 完全可选 · 默认离线模板 · Key 只存在于代理进程环境变量
-> - 含「智能参谋」问答工作台（per-RTA 有限上下文问答 · 9 类意图 · 模板优先 + LLM 可选增强）
+> - 含「智能参谋」问答工作台（per-RTA 有限上下文问答 · v0.6 诊断解释 + v0.7 Mock 查数 · 模板优先 + LLM 可选增强）
 
 > **⚠️ AI 模式 / DeepSeek 接入（v6 final 安全版）**
 > - 默认 `LLM_CONFIG.enabled = false`，演示走**模板分派**（完全离线 + 稳定 + 无网也能跑）
@@ -21,7 +21,7 @@
 ### 方式 A：双击 file:// 直接打开（最简）
 
 ```
-D:\AI_Codex\Projects\program3-r\demo\v6\index.html
+demo/v6/index.html
 ```
 
 双击即开，无需任何服务器、无需联网。
@@ -29,7 +29,7 @@ D:\AI_Codex\Projects\program3-r\demo\v6\index.html
 ### 方式 B：本地 HTTP server
 
 ```bash
-cd D:\AI_Codex\Projects\program3-r\demo\v6
+cd demo/v6
 python -m http.server 8080
 # 浏览器打开 http://localhost:8080
 ```
@@ -46,6 +46,7 @@ demo/v6/
 ├── _verify_scenes.cjs    # 5 场景七段式完整性验证（Node.js，无网络调用）
 ├── _verify_llm.cjs       # LLM 路径 10 个 stub 验证（Node.js + fetch stub，零外网）
 ├── _verify_assistant.cjs # 智能参谋 47 个 stub 验证（静态扫描 + 动态用例，零外网）
+├── _verify_v07.cjs       # v0.7 QueryContext / Mock 只读查询层 30 个验收用例
 ├── _proxy-test.sh        # llm-proxy 启动冒烟测试脚本（可选运维工具）
 └── vendor/
     ├── vue.global.js     # Vue 3.4.38 UMD（525KB，已验证完整）
@@ -140,14 +141,17 @@ demo/v6/
 | --- | --- | --- |
 | 入口 | 左侧导航「投放管理 > RTA > 智能参谋」（位于 RTA 实验后、数据中心前） | ✅ |
 | 形态 | per-RTA 有限上下文连续问答工作台（切换 RTA 自动重置会话） | ✅ |
-| 意图分类 | 9 类正则分类：overview / budget / attribution / evidence / excluded / recommendation / observation / rollback / out_of_scope；另含 execute_refuse（拒绝执行）与数据不足降级 | ✅ |
+| 意图分类 | v0.6 诊断解释意图 + v0.7 查询意图：overview / budget / attribution / evidence / excluded / recommendation / observation / rollback / metric_query / trend_query / group_compare / config_query / out_of_scope；另含 execute_refuse（拒绝执行）与数据不足降级 | ✅ |
+| Mock 查询层 | QueryContext 统一当前 RTA、时间范围、实验组/对照组、配置变更和指标数据；所有查询结果带 `EV-*` evidenceId | ✅ |
+| 查询能力 | 当前 RTA 指标查询、趋势对比、实验组/对照组对比、配置变更查询、诊断证据引用 | ✅ |
+| 查询拒答 | 跨 RTA、数据不足、Schema 冲突、证据冲突、执行类请求均拒答或降级模板 | ✅ |
 | 回答来源 | 模板优先（离线可跑）→ 可选 LLM 增强（复用 LLM_CONFIG 通道，独立 prompt + 校验，失败回退模板） | ✅ |
 | 推荐问题 | 4 条首屏推荐 + 进入诊断结果后 2 条追问（推荐问与手动输入走同一流程） | ✅ |
 | 上下文裁剪 | 保留首条欢迎语 + system + 最近 8 轮（MAX_TURNS=8） | ✅ |
 | 边界 | 拒绝执行类请求；超范围问题（跨 RTA / 行业大盘 / 实时媒体状态）明确说明不能回答；数据不足不编造 | ✅ |
 | 自动化验证 | `_verify_assistant.cjs`：47 个用例（8 项 forbidden 静态扫描 + 9 项 required 断言 + 30 项动态用例） | ✅ |
 
-> 智能参谋只回答**当前所选 RTA 在当前数据范围内**的诊断与分析问题；它是诊断归因层的"追问/解释"入口，不构成独立问数 Agent（不做跨 RTA 历史查询、不做行业大盘、不直接执行任何配置变更）。
+> 智能参谋只回答**当前所选 RTA 在当前 Mock 数据范围内**的诊断、分析和只读查数问题；它是诊断归因层的"追问/解释 + 有证据查数"入口，不构成通用问数 Agent（不做跨 RTA 历史查询、不做行业大盘、不直接执行任何配置变更）。
 
 ---
 
@@ -272,7 +276,7 @@ const ai = runAiLayer(record, signals, scenario);
 $env:DEEPSEEK_API_KEY = "sk-xxxxxx"
 
 # 2. 启动本地代理（仅绑 127.0.0.1）
-cd D:\AI_Codex\Projects\program3-r\demo\v6
+cd demo/v6
 node llm-proxy.mjs
 
 # 3. 浏览器打开 index.html（双击 file:// 或 python -m http.server 8080）
@@ -355,9 +359,23 @@ askAssistant(question)
 
 **边界（与诊断抽屉一致）**：执行类请求一律 `execute_refuse` 并引导走人工确认状态机；超范围问题（跨 RTA / 行业大盘 / 实时媒体状态）返回 `out_of_scope` 说明；数据不足返回缺失字段清单，不编造。`_verify_assistant.cjs` 47 个用例覆盖上述全部分支（含 8 项静态扫描断言：前端无 apiKey / 无 Authorization / 无填 Key 提示）。
 
+### 7.9 v0.7 Mock 只读查询层
+
+`performDiagnosis(record)` 会为已完成报告挂载 `queryContext`：
+
+- `metrics`：日预算、消耗、达成率、QPS、请求量、命中率、对照组/实验组参竞率、CPA、回传等指标；
+- `trend`：当前 Mock 时间范围内的时序点；
+- `groups`：对照组/实验组、分桶、实验组配置快照；
+- `configChanges`：配置变更记录；
+- `evidence`：所有可引用证据，稳定编号为 `EV-*`。
+
+智能参谋新增 4 类查询意图：`metric_query`、`trend_query`、`group_compare`、`config_query`，并把原有 `evidence` 回答升级为证据查询。查询层只读、只查当前 RTA，不触发真实媒体 API。若 QueryContext Schema 不完整、趋势点不足、问题提到其他 RTAID，或计算结果与 Mock 字段冲突，参谋会拒答或降级，不编造数字。
+
+LLM 可选增强仍复用本地代理；对查询型回答，校验器要求输出中包含合法 `EV-*` evidenceId，否则丢弃 LLM 结果并回退模板。
+
 ---
 
-## 8. 自查结果（8 项）
+## 8. 自查结果（10 项）
 
 | # | 自查项 | 工具 | 结果 |
 | --- | --- | --- | --- |
@@ -369,7 +387,8 @@ askAssistant(question)
 | ⑥ | 列表可见「CPA 过高」+「可安全放量」 | `_verify.cjs` | ✅ 两条都可见 |
 | ⑦ | 全局错误捕获（故意抛错见红框） | window.onerror + #__errbox | ✅ 顶部红框渲染 |
 | ⑧ | LLM 路径 10 个用例全过（含 3 项静态扫描：前端无 apiKey / 无 Authorization / 无填 Key 提示；7 项动态 stub：关闭/Golden 对齐/网络错/500/503 LLM_NOT_CONFIGURED/malformed JSON/校验失败） | `_verify_llm.cjs` | ✅ 10/10 |
-| ⑨ | 智能参谋 47 个用例全过（8 项 forbidden 静态扫描 + 9 项 required 断言 + 30 项动态用例，覆盖 9 类意图 + 执行拒绝 + 超范围 + 数据不足） | `_verify_assistant.cjs` | ✅ 47/47 |
+| ⑨ | 智能参谋 47 个用例全过（8 项 forbidden 静态扫描 + 9 项 required 断言 + 30 项动态用例，覆盖诊断解释意图 + 执行拒绝 + 超范围 + 数据不足） | `_verify_assistant.cjs` | ✅ 47/47 |
+| ⑩ | v0.7 查询层 30 个用例全过（Schema / evidenceId / 指标 / 趋势 / 组间 / 配置 / RTA 隔离 / 冲突拒答 / LLM 查询证据校验） | `_verify_v07.cjs` | ✅ 30/30 |
 
 ---
 
@@ -384,7 +403,7 @@ askAssistant(question)
 7. **术语对照表**：抽屉最底部「📖 术语对照表（黑话翻译）」默认折叠，点击展开可看 10 个术语翻译。
 8. **技术详情**：抽屉倒数第二段「07 · 人工确认 + 技术详情」默认折叠，点击展开可看 RTAID/实验 ID/分桶/请求 ID/日志路径/configBefore/After 等。
 9. **AI 模式演示（需先启动本地代理 + 设置 DEEPSEEK_API_KEY）**：在终端 `export DEEPSEEK_API_KEY=sk-xxx`（Windows PowerShell: `$env:DEEPSEEK_API_KEY='sk-xxx'`）→ `cd demo/v6 && node llm-proxy.mjs` → 浏览器打开 index.html → 勾选右上角「AI 模式 · DeepSeek」→ 任意行点击「发起诊断」→ 抽屉先出现「模板」（灰角标），约 1-3s 后若 LLM 通过 5 项校验 + Golden Case 特判，角标自动变为「AI 生成」并 patch oneLiner / managerSummary / operationsNote / recommendations 文案；任何失败链路（代理未启动 / Key 未设置 503 / 网络断 / 校验不过 / Golden Case 不符）→ 角标保持「模板」，UI 不崩。**前端不会显示、不会要求你填写任何 Key**。
-10. **智能参谋演示**：左侧菜单「投放管理 > RTA > 智能参谋」→ 选择 RTAID → 点击右侧推荐问题（如"这个 RTA 现在有什么异常？"）→ 模板秒回；追问"为什么预算没有跑出去？""建议调整什么，调整后观察哪些指标？""回滚条件是什么？" → 命中 9 类意图中的不同回答；输入"直接帮我加预算" → 触发 execute_refuse 拒绝执行并引导走人工确认流程；输入"别的 RTA 呢？" → out_of_scope 说明只能回答当前 RTA；切换 RTA → 会话自动重置。
+10. **智能参谋演示**：左侧菜单「投放管理 > RTA > 智能参谋」→ 选择 RTAID → 点击右侧推荐问题（如"这个 RTA 现在有什么异常？"）→ 模板秒回；追问"为什么预算没有跑出去？""建议调整什么，调整后观察哪些指标？""回滚条件是什么？" → 命中诊断解释回答；输入"当前 CPA、转化数和 QPS 指标是多少？""参竞率趋势从开始到最后下降了多少？""对照组和实验组对比如何？""配置变更记录是什么？" → 命中 v0.7 QueryContext 查数回答，并显示 `EV-*` 证据引用；输入"直接帮我加预算" → 触发 execute_refuse 拒绝执行并引导走人工确认流程；输入"别的 RTA 呢？" → out_of_scope 说明只能回答当前 RTA；切换 RTA → 会话自动重置。
 
 ---
 
@@ -413,12 +432,12 @@ askAssistant(question)
 ## 12. 相关文档
 
 - PRD：《项目三：RTA 投放诊断 Agent · PRD v0.2.1》
-- 场景方案：《场景扩展方案 v0.1》（S0-S7 + 现象标签）
+- 场景方案：《场景扩展方案 v0.2》（S0-S7 + 现象标签）
 - 契约：《Agent 输入输出结构契约 v0.3》（v0.3 基于 v6 落地场景识别 + CPA 现象标签；D14 CPA 判定为契约 v0.3 增补，仅服务现象标签，不进 S0-S7 短路链）
-- AI 层：《AI 层设计与评测方案 v0.1》（§4.1 接口形状）
-- 规则表：《MVP 诊断规则表 v0.1》（D1-D13 为主规则；D14 CPA 判定由《契约 v0.3》增补，仅服务现象标签「CPA 过高」，不进 S0-S7 短路链）
+- AI 层：《AI 层设计与评测方案 v0.2》（输入输出、证据约束和评测）
+- 规则表：《MVP 诊断规则表 v0.1》（D1-D14；D14 CPA 判定仅服务现象标签「CPA 过高」，不进 S0-S7 短路链）
 - 对象模型：《RTA 对象模型与字段清单 v0.1》（O1-O11）
-- 字段口径：《贴图与页面结构参考清单》（母版 A/B/C）
+- 字段口径：基于脱敏后的平台字段抽象；内部截图参考材料不随公开版本发布
 
 ---
 
@@ -432,8 +451,8 @@ askAssistant(question)
                   RTA 投放诊断 Agent
 ```
 
-本节只作为项目定位说明（用于作品集叙事 + 面试时解释 Agent 在更大业务链中的位置）。本轮 Demo 范围 = **诊断归因层**：实现的是"规则引擎 + 场景识别 + AI 归因解释 + 人工确认/执行 + 智能参谋受限问答"；**没有**实现效果预测、趋势分析、应急暂停、跨 RTA 通用问数等其他 Agent 的能力——智能参谋仅提供**当前 RTA 诊断范围内的受限问答**（见 §3.5 / §7.8），不是独立问数 Agent，不扩大范围。
+本节用于说明 Agent 在更大业务链中的边界。本轮 Demo 范围 = **诊断归因层**：实现的是"规则引擎 + 场景识别 + AI 归因解释 + 人工确认/执行 + 智能参谋受限问答"；**没有**实现效果预测、趋势分析、应急暂停、跨 RTA 通用问数等其他 Agent 的能力——智能参谋仅提供**当前 RTA 诊断范围内的受限问答**（见 §3.5 / §7.8），不是独立问数 Agent，不扩大范围。
 
 ---
 
-_最后更新：2026-08-23 · v6 Demo 增量（智能参谋问答工作台 + LLM 安全版 + 数据范围 + 蓝图定位）_
+_最后更新：2026-08-26 · v6 Demo 对齐版（智能参谋问答工作台 + LLM 安全版 + 数据范围 + 蓝图定位）_
