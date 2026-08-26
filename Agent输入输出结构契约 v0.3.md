@@ -71,7 +71,7 @@
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| projectId | string | 是 | 投放项目（作品集层对象），如 P-2026-SUMMER |
+| projectId | string | 是 | 投放项目（Demo 扩展对象），如 P-2026-SUMMER |
 | rtaId | string | 是 | 关联 RTAID，如 juliang-rta-2086 |
 | dateRange | { start: string; end: string } | 是 | 诊断时间范围，默认当天 |
 | problemHint | string | 否 | 用户看到的现象描述（如"预算没跑出去"） |

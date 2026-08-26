@@ -68,10 +68,10 @@ JSON Schema 校验与证据一致性检查
 DiagnosisReport + 人工确认状态
 ```
 
-### 3.1 进入 AI 层前
+### 3.1 进入 AI 层前（v0.7 增强项）
 
 - 检查必填字段、时间顺序、数值类型和单位。
-- 为每条证据生成稳定的 `evidenceId`，例如 `EV-001`。
+- 为每条证据生成稳定的 `evidenceId`，例如 `EV-001`；v0.6 当前使用节点和事件字段直接回指。
 - 标记数据新鲜度、缺失字段和冲突字段。
 - 如果规则引擎没有可用异常节点，直接进入“未发现明确异常”分支，不调用 LLM。
 
@@ -81,12 +81,12 @@ DiagnosisReport + 人工确认状态
 2. **解释**：根据同一组事实生成管理摘要、运营说明和技术说明。
 3. **规划**：只在存在可调整配置和足够证据时生成实验建议。
 
-### 3.3 输出后
+### 3.3 输出后（v0.7 增强项）
 
 - 校验 JSON Schema、枚举值、必填字段和数组长度。
 - 检查结论中的数字、时间、配置前后值是否存在于输入证据。
 - 检查推荐动作是否越过“只读诊断”边界。
-- 校验失败时返回模板化降级结果，并记录失败原因，不展示未经校验的 LLM 原文。
+- v0.6 当前由模板优先和 LLM 5 项校验保障；后续增加完整 JSON Schema 校验时，失败结果统一返回模板化降级结果，不展示未经校验的 LLM 原文。
 
 ---
 
@@ -144,8 +144,10 @@ DiagnosisReport + 人工确认状态
 
 ## 5. AI 层输出契约
 
+v0.6 当前模板实现返回的 AI 字段如下，和 `demo/v6/index.html` 的 `runAiLayer` 对齐：
+
 ```ts
-interface AILayerOutput {
+interface AILayerOutputV06 {
   oneLiner: string
   managerSummary: string
   operationsNote: string
@@ -156,9 +158,6 @@ interface AILayerOutput {
   }
   affectedScope: string
   recommendations: Recommendation[]
-  evidenceRefs: string[]
-  confidence: number
-  status: "complete" | "partial" | "insufficient_evidence"
 }
 
 interface Recommendation {
@@ -169,6 +168,16 @@ interface Recommendation {
   observeMetrics: string[]
   successCriteria: string
   rollbackCondition: string
+}
+```
+
+v0.7 计划在输入证据编号和 Schema 校验落地后扩展以下字段：
+
+```ts
+interface AILayerQualityExtension {
+  evidenceRefs: string[]
+  confidence: number
+  status: "complete" | "partial" | "insufficient_evidence"
 }
 ```
 
@@ -184,9 +193,7 @@ interface Recommendation {
 | causes.excluded | 每条排除项附对应证据，不能只列结论 |
 | affectedScope | 由实验、分桶、流量或账户范围证据推导 |
 | recommendations | 必须包含 action、before、after、observeMetrics、successCriteria、rollbackCondition |
-| evidenceRefs | 引用输入中的 `evidenceId`；没有证据时为空数组 |
-| confidence | 反映证据充分性，不等同于模型的主观确信度 |
-| status | 证据完整时为 `complete`，部分缺失为 `partial`，无法归因为 `insufficient_evidence` |
+| evidenceRefs / confidence / status | v0.7 扩展字段；v0.6 由模板和人工确认状态承担同等边界，不作为当前前端字段 |
 
 `recommendations[].before` 必须对应当前生效值，`after` 必须来自允许调整的配置范围。不得把历史变更的 `before` 值误写成当前值，不得生成自动执行指令。
 
