@@ -1,4 +1,4 @@
-# RTA 投放诊断 Agent · Demo v6
+# RTA 投放诊断 Agent · Demo 
 
 > **当前正式发布版本：V0.8.0**（Demo 运行入口仍为 `v6`；v1-v5 及旧 prototype / Vue+Vite 工程均已废弃）
 > **V0.8.0 定位：**完成 Provider 契约、Mock/Replay 数据边界和受控只读工具接入；真实媒体 API 只读联调属于 V0.9。
