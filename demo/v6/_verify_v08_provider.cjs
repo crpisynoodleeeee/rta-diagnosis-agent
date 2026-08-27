@@ -10,6 +10,7 @@ const {
   validateEnvelope
 } = require('./data/media-data-provider.js');
 const { MockMediaDataProvider } = require('./data/mock-media-data-provider.js');
+const { ReplayMediaAdapter } = require('./data/replay-media-adapter.js');
 const fs = require('fs');
 const path = require('path');
 
@@ -41,6 +42,10 @@ const request = {
   rtaId: 'juliang-rta-2086',
   timeRange: { start: '2026-08-14 00:00:00', end: '2026-08-14 13:30:00' }
 };
+
+function requestFor(rtaId) {
+  return { rtaId, timeRange: { start: '2026-08-27 00:00:00', end: '2026-08-27 01:00:00' } };
+}
 
 const meta = {
   providerId: 'mock-v08',
@@ -78,6 +83,26 @@ const mockRecord = {
   conversionCount: 4,
   actualCpa: 20,
   targetCpa: 25
+};
+
+let replayNow = Date.parse('2026-08-27T00:00:10.000Z');
+const replayFixture = {
+  response: {
+    rta_id: 'replay-rta-001',
+    source_record_id: 'media-replay:001',
+    updated_at: '2026-08-27T00:00:00.000Z',
+    config: {
+      rtaid: { media: 'replay-media', rta_id: 'replay-rta-001', rta_internal_id: 'RTA-REPLAY-001', status: '上线' },
+      groups: [{ groupId: 'G-C', groupType: 'control' }, { groupId: 'G-T', groupType: 'treatment' }],
+      config_changes: [{ time: '2026-08-27 00:00', field: '准入门槛', before: '40%', after: '60%' }]
+    },
+    metrics: {
+      core: { currentQps: 42 },
+      usage: { totalRequests: 900 },
+      budget: { daily_budget: 100, actual_cost: 80, actual_cpa: 20, target_cpa: 25 },
+      trends: [{ time: '00:00', bidRate: 0.6 }, { time: '00:10', bidRate: 0.5 }]
+    }
+  }
 };
 
 class TestProvider extends MediaDataProvider {
@@ -199,6 +224,82 @@ check('demo loads both provider scripts and uses provider record hook', () => {
   assert(html.includes('new PROVIDER_API.MockMediaDataProvider(MOCK_RTA_LIST)'));
   assert(html.includes('record = getProviderRecord(record);'));
 });
+check('replay adapter normalizes media-shaped response', () => {
+  const adapter = new ReplayMediaAdapter([replayFixture], { clock: () => replayNow });
+  const envelope = adapter.getDataEnvelope(requestFor('replay-rta-001'));
+  assert.strictEqual(envelope.configSnapshot.rtaid.rtaId, 'replay-rta-001');
+  assert.strictEqual(envelope.metricBundle.coreMetrics.currentQps, 42);
+  assert.strictEqual(envelope.metricBundle.budget.actualCost, 80);
+  assert.strictEqual(envelope.meta.sourceRecordId, 'media-replay:001');
+  assert.strictEqual(envelope.meta.qualityStatus, 'ok');
+});
+check('replay adapter serves cache hits within TTL', () => {
+  const adapter = new ReplayMediaAdapter([replayFixture], { clock: () => replayNow, cacheTtlSeconds: 60 });
+  assert.strictEqual(adapter.getDataEnvelope(requestFor('replay-rta-001')).meta.cacheHit, false);
+  assert.strictEqual(adapter.getDataEnvelope(requestFor('replay-rta-001')).meta.cacheHit, true);
+});
+check('replay adapter reloads after cache expiry', () => {
+  const adapter = new ReplayMediaAdapter([replayFixture], { clock: () => replayNow, cacheTtlSeconds: 60 });
+  adapter.getDataEnvelope(requestFor('replay-rta-001'));
+  replayNow += 61000;
+  replayFixture.response.metrics.core.currentQps = 84;
+  const envelope = adapter.getDataEnvelope(requestFor('replay-rta-001'));
+  assert.strictEqual(envelope.meta.cacheHit, false);
+  assert.strictEqual(envelope.metricBundle.coreMetrics.currentQps, 84);
+  replayFixture.response.metrics.core.currentQps = 42;
+  replayNow -= 61000;
+});
+check('stale replay data is marked for downstream degradation', () => {
+  const adapter = new ReplayMediaAdapter([replayFixture], {
+    clock: () => replayNow + 901000,
+    maxFreshnessSeconds: 900
+  });
+  const envelope = adapter.getDataEnvelope(requestFor('replay-rta-001'));
+  assert.strictEqual(envelope.meta.qualityStatus, 'stale');
+  assert(envelope.meta.freshnessSeconds > 900);
+});
+check('strict stale policy returns DATA_STALE', () => {
+  const adapter = new ReplayMediaAdapter([replayFixture], {
+    clock: () => replayNow + 901000,
+    maxFreshnessSeconds: 900,
+    stalePolicy: 'error'
+  });
+  assert.throws(() => adapter.getDataEnvelope(requestFor('replay-rta-001')), error => {
+    return error instanceof ProviderError && error.code === ERROR_CODES.DATA_STALE;
+  });
+});
+check('timeout failure degrades with retryable error', () => {
+  const adapter = new ReplayMediaAdapter([{ rtaId: 'timeout-rta', failure: { code: 'TIMEOUT' } }]);
+  const result = adapter.getDataEnvelopeSafe(requestFor('timeout-rta'));
+  assert.strictEqual(result.status, 'degraded');
+  assert.strictEqual(result.error.code, ERROR_CODES.TIMEOUT);
+  assert.strictEqual(result.error.retryable, true);
+});
+check('permission failure degrades without retry', () => {
+  const adapter = new ReplayMediaAdapter([{ rtaId: 'denied-rta', failure: { code: 'PERMISSION_DENIED' } }]);
+  const result = adapter.getDataEnvelopeSafe(requestFor('denied-rta'));
+  assert.strictEqual(result.status, 'degraded');
+  assert.strictEqual(result.error.code, ERROR_CODES.PERMISSION_DENIED);
+  assert.strictEqual(result.error.retryable, false);
+});
+check('invalid replay timestamp is a schema failure', () => {
+  const adapter = new ReplayMediaAdapter([{ rtaId: 'bad-rta', updated_at: 'invalid' }]);
+  assert.throws(() => adapter.getDataEnvelope(requestFor('bad-rta')), error => {
+    return error instanceof ProviderError && error.code === ERROR_CODES.SCHEMA_MISMATCH;
+  });
+});
+check('replay adapter rejects non-current scope before loading', () => {
+  const adapter = new ReplayMediaAdapter([replayFixture]);
+  assert.throws(() => adapter.getDataEnvelope(Object.assign({}, requestFor('replay-rta-001'), { dataScope: 'account_wide' })), error => {
+    return error instanceof ProviderError && error.code === ERROR_CODES.INVALID_REQUEST;
+  });
+});
+check('replay cache can be explicitly cleared', () => {
+  const adapter = new ReplayMediaAdapter([replayFixture], { clock: () => replayNow });
+  adapter.getDataEnvelope(requestFor('replay-rta-001'));
+  adapter.clearCache();
+  assert.strictEqual(adapter.getDataEnvelope(requestFor('replay-rta-001')).meta.cacheHit, false);
+});
 
 (async () => {
   await checkAsync('base provider methods fail as not implemented', async () => {
@@ -216,7 +317,7 @@ check('demo loads both provider scripts and uses provider record hook', () => {
     assert.strictEqual(validateEnvelope(result).ok, true);
   });
 
-  const total = 19;
+  const total = 29;
   console.log('V0.8 Provider verification: ' + passed + ' / ' + total + ' passed');
   if (passed !== total) process.exitCode = 1;
 })();

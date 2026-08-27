@@ -57,7 +57,7 @@ AI/模板诊断输出
 | 文档 | 用途 |
 | --- | --- |
 | [v0.7.0 发布说明](docs/releases/v0.7.0.md) | 当前版本、Mock 查询层、证据编号和专项验收 |
-| [V0.8 Provider 契约](docs/architecture/v0.8-provider-contract.md) | 统一数据 Provider、Mock 抽离、Adapter 边界和分批迁移方案 |
+| [V0.8 Provider 契约](docs/architecture/v0.8-provider-contract.md) | 统一数据 Provider、Mock 抽离、回放 Adapter、Adapter 边界和分批迁移方案 |
 | [v0.6.0 发布说明](docs/releases/v0.6.0.md) | 历史版本、验证范围和已知限制 |
 | [PRD v0.2.1](PRD%20v0.2.1.md) | 产品范围、页面、状态机和验收标准 |
 | [Agent 输入输出结构契约 v0.3](Agent输入输出结构契约%20v0.3.md) | 输入、输出和字段契约 |
@@ -82,7 +82,7 @@ node _verify_v07.cjs
 node _verify_v08_provider.cjs
 ```
 
-五组 V0.7 脚本覆盖 Golden Case、5 类扩展场景、10 条 LLM 路径、47 条智能参谋用例和 30 条 v0.7 查询层用例；V0.8 Provider 脚本覆盖只读契约、请求范围、错误模型和 Envelope 校验。测试使用 Mock 数据和 Stub，不代表真实媒体接口联调或业务收益。
+五组 V0.7 脚本覆盖 Golden Case、5 类扩展场景、10 条 LLM 路径、47 条智能参谋用例和 30 条 v0.7 查询层用例；V0.8 Provider 脚本覆盖只读契约、Mock 抽离、回放标准化、缓存、新鲜度和错误降级。测试使用 Mock 数据和 Stub，不代表真实媒体接口联调或业务收益。
 
 ## 部署
 
