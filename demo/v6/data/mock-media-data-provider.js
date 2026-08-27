@@ -16,7 +16,9 @@
     ProviderError,
     ERROR_CODES,
     validateProviderRequest,
-    createProviderMeta
+    createProviderMeta,
+    validateEnvelope,
+    CONTRACT_VERSION
   } = contract;
 
   function clone(value) {
@@ -117,6 +119,21 @@
         },
         meta: Object.assign(this._meta(record), { request: normalized })
       };
+    }
+
+    getDataEnvelope(request) {
+      const config = this.getConfigSnapshot(request);
+      const metrics = this.getMetricBundle(request);
+      const envelope = {
+        contractVersion: CONTRACT_VERSION,
+        request: clone(config.meta.request),
+        configSnapshot: config.data,
+        metricBundle: metrics.data,
+        meta: Object.assign({}, config.meta, { qualityStatus: 'ok', missingFields: [] })
+      };
+      const validation = validateEnvelope(envelope);
+      if (!validation.ok) throw new ProviderError(ERROR_CODES.SCHEMA_MISMATCH, 'mock envelope is invalid', { providerId: this.providerId, details: { errors: validation.errors } });
+      return envelope;
     }
   }
 

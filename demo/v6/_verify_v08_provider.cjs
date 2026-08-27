@@ -11,6 +11,7 @@ const {
 } = require('./data/media-data-provider.js');
 const { MockMediaDataProvider } = require('./data/mock-media-data-provider.js');
 const { ReplayMediaAdapter } = require('./data/replay-media-adapter.js');
+const { createReadOnlyToolRunner, toolNameForIntent, isAllowedTool } = require('./data/readonly-query-tools.js');
 const fs = require('fs');
 const path = require('path');
 
@@ -300,6 +301,46 @@ check('replay cache can be explicitly cleared', () => {
   adapter.clearCache();
   assert.strictEqual(adapter.getDataEnvelope(requestFor('replay-rta-001')).meta.cacheHit, false);
 });
+check('read-only tool mapping stays within whitelist', () => {
+  assert.strictEqual(toolNameForIntent('metric_query'), 'metrics');
+  assert.strictEqual(toolNameForIntent('config_query'), 'config_changes');
+  assert.strictEqual(isAllowedTool('diagnosis_evidence'), true);
+  assert.strictEqual(isAllowedTool('write_config'), false);
+});
+check('read-only runner attaches provider provenance', () => {
+  const provider = new MockMediaDataProvider([mockRecord]);
+  const result = createReadOnlyToolRunner(provider).run('metrics', requestFor(mockRecord.rtaId), () => ({
+    status: 'ok', rows: [{ evidenceId: 'EV-METRIC-001' }]
+  }));
+  assert.strictEqual(result.status, 'ok');
+  assert.strictEqual(result.toolName, 'metrics');
+  assert.strictEqual(result.providerContractVersion, CONTRACT_VERSION);
+  assert.strictEqual(result.providerMeta.providerId, 'mock-v08');
+});
+check('non-whitelisted tool is refused before provider access', () => {
+  const provider = new MockMediaDataProvider([mockRecord]);
+  const result = createReadOnlyToolRunner(provider).run('write_config', requestFor(mockRecord.rtaId), () => {
+    throw new Error('must not execute');
+  });
+  assert.strictEqual(result.status, 'refused');
+  assert.strictEqual(result.reason, 'tool_not_allowed');
+});
+check('stale provider data degrades read-only query', () => {
+  const adapter = new ReplayMediaAdapter([replayFixture], {
+    clock: () => replayNow + 901000,
+    maxFreshnessSeconds: 900
+  });
+  const result = createReadOnlyToolRunner(adapter).run('trend', requestFor('replay-rta-001'), () => ({ status: 'ok' }));
+  assert.strictEqual(result.status, 'insufficient');
+  assert.strictEqual(result.reason, 'provider_data_insufficient');
+  assert.strictEqual(result.providerMeta.qualityStatus, 'stale');
+});
+check('provider failure degrades without throwing', () => {
+  const adapter = new ReplayMediaAdapter([{ rtaId: 'failed-rta', failure: { code: 'TIMEOUT' } }]);
+  const result = createReadOnlyToolRunner(adapter).run('metrics', requestFor('failed-rta'), () => ({ status: 'ok' }));
+  assert.strictEqual(result.status, 'insufficient');
+  assert.strictEqual(result.reason, 'provider_error');
+});
 
 (async () => {
   await checkAsync('base provider methods fail as not implemented', async () => {
@@ -317,7 +358,7 @@ check('replay cache can be explicitly cleared', () => {
     assert.strictEqual(validateEnvelope(result).ok, true);
   });
 
-  const total = 29;
+  const total = 34;
   console.log('V0.8 Provider verification: ' + passed + ' / ' + total + ' passed');
   if (passed !== total) process.exitCode = 1;
 })();

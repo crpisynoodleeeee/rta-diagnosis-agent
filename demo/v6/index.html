@@ -111,6 +111,7 @@
 <!-- V0.8 data boundary: provider contracts load before the synchronous Demo logic. -->
 <script src="./data/media-data-provider.js"></script>
 <script src="./data/mock-media-data-provider.js"></script>
+<script src="./data/readonly-query-tools.js"></script>
 
 <!-- 主应用（普通 script + const { createApp, ... } = Vue 解构） -->
 <script>
@@ -118,6 +119,7 @@
 
 const { createApp, ref, reactive, computed, watch, onMounted, nextTick } = Vue;
 const PROVIDER_API = typeof RTADataProvider !== 'undefined' ? RTADataProvider : null;
+const READONLY_TOOL_API = typeof RTAReadOnlyTools !== 'undefined' ? RTAReadOnlyTools : null;
 
 /* ═══════════════════════════════════════════════════════════════════════
  * 0.5 LLM_CONFIG（DeepSeek AI 层接入 · 方案 B：模板兜底 + LLM 异步叠加）
@@ -593,6 +595,46 @@ function getDataRecord(rtaId) {
 
 function getProviderRecord(record) {
   return record && MOCK_PROVIDER ? (MOCK_PROVIDER.getRecord(record.rtaId) || record) : record;
+}
+
+function providerRequestFor(record) {
+  return {
+    rtaId: record.rtaId,
+    timeRange: { start: '2026-08-14 00:00:00', end: '2026-08-14 13:30:00' },
+    dataScope: 'current_rta_only'
+  };
+}
+
+function getProviderEnvelope(record) {
+  return record && MOCK_PROVIDER ? MOCK_PROVIDER.getDataEnvelope(providerRequestFor(record)) : null;
+}
+
+function mergeProviderEnvelopeIntoRecord(record, envelope) {
+  if (!envelope) return record;
+  const config = envelope.configSnapshot || {};
+  const metrics = envelope.metricBundle || {};
+  const budget = metrics.budget || {};
+  const rta = config.rtaid || {};
+  return Object.assign({}, record, {
+    media: rta.media === undefined ? record.media : rta.media,
+    rtaInternalId: rta.rtaInternalId || record.rtaInternalId,
+    bidUrl: rta.bidUrl || record.bidUrl,
+    status: rta.status || record.status,
+    qpsConfig: rta.qpsConfig === undefined ? record.qpsConfig : rta.qpsConfig,
+    qpsUsed: rta.qpsUsed === undefined ? record.qpsUsed : rta.qpsUsed,
+    qpsRemaining: rta.qpsRemaining === undefined ? record.qpsRemaining : rta.qpsRemaining,
+    boundAccounts: config.boundAccounts === undefined ? record.boundAccounts : config.boundAccounts,
+    strategies: config.strategies || [], experiment: config.experiment || {},
+    groups: config.groups || [], bucketMode: config.bucketMode, changes: config.changes || [],
+    coreMetrics: metrics.coreMetrics || {}, usageMetrics: metrics.usageMetrics || {},
+    trend: metrics.trend || [], logSummary: metrics.logSummary || {}, attribution: metrics.attribution || {},
+    budget: Object.assign({}, record.budget || {}, budget),
+    dailyBudget: budget.dailyBudget === undefined ? record.dailyBudget : budget.dailyBudget,
+    actualCost: budget.actualCost === undefined ? record.actualCost : budget.actualCost,
+    conversionCount: budget.conversionCount === undefined ? record.conversionCount : budget.conversionCount,
+    actualCpa: budget.actualCpa === undefined ? record.actualCpa : budget.actualCpa,
+    targetCpa: budget.targetCpa === undefined ? record.targetCpa : budget.targetCpa
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -1567,7 +1609,8 @@ function addEvidence(list, evidenceId, type, label, path, value, text) {
   });
 }
 
-function buildQueryContext(record, report) {
+function buildQueryContext(record, report, providerEnvelope) {
+  record = mergeProviderEnvelopeIntoRecord(record, providerEnvelope);
   const evidence = [];
   const metrics = {};
 
@@ -1822,7 +1865,7 @@ function trendMetricFromQuestion(question) {
 function ensureQueryContext(report, record) {
   if (report && report.queryContext) return report.queryContext;
   if (!report || report.status !== 'completed') return null;
-  return buildQueryContext(record, report);
+  return buildQueryContext(record, report, getProviderEnvelope(record));
 }
 
 function makeQueryRefusal(status, reason, detail, evidenceIds) {
@@ -1849,14 +1892,21 @@ function runAssistantQuery(question, intent, report, record) {
     return makeQueryRefusal('insufficient', 'schema_insufficient', ctx.dataQuality.missingFields.concat(ctx.dataQuality.schemaErrors).join('、'), ctx.evidence.map(e => e.evidenceId));
   }
 
-  if (intent === 'metric_query') return queryMetrics(ctx, metricKeysFromQuestion(question));
-  if (intent === 'trend_query') return queryTrend(ctx, trendMetricFromQuestion(question));
-  if (intent === 'group_compare') return queryGroupCompare(ctx);
-  if (intent === 'config_query') return queryConfigChanges(ctx);
-  if (intent === 'evidence') return queryDiagnosisEvidence(ctx);
-  if (intent === 'budget') return queryMetrics(ctx, ['dailyBudget','actualCost','gap','achievementRate','bidRateControl','bidRateTreatment']);
-  if (intent === 'attribution') return queryMetrics(ctx, ['callbackSuccessRate','callbackLatency','missingFieldRate','actualCpa','targetCpa']);
-  return null;
+  const execute = () => {
+    if (intent === 'metric_query') return queryMetrics(ctx, metricKeysFromQuestion(question));
+    if (intent === 'trend_query') return queryTrend(ctx, trendMetricFromQuestion(question));
+    if (intent === 'group_compare') return queryGroupCompare(ctx);
+    if (intent === 'config_query') return queryConfigChanges(ctx);
+    if (intent === 'evidence') return queryDiagnosisEvidence(ctx);
+    if (intent === 'budget') return queryMetrics(ctx, ['dailyBudget','actualCost','gap','achievementRate','bidRateControl','bidRateTreatment']);
+    if (intent === 'attribution') return queryMetrics(ctx, ['callbackSuccessRate','callbackLatency','missingFieldRate','actualCpa','targetCpa']);
+    return null;
+  };
+  const toolName = READONLY_TOOL_API && READONLY_TOOL_API.toolNameForIntent(intent);
+  if (toolName && MOCK_PROVIDER) {
+    return READONLY_TOOL_API.createReadOnlyToolRunner(MOCK_PROVIDER).run(toolName, providerRequestFor(record), execute);
+  }
+  return execute();
 }
 
 function queryMetrics(ctx, keys) {
@@ -2142,10 +2192,12 @@ function performDiagnosis(record) {
     technical,
     _aiSource: ai._source || 'template'
   };
-  const queryContext = buildQueryContext(record, completedReport);
+  const providerEnvelope = getProviderEnvelope(record);
+  const queryContext = buildQueryContext(record, completedReport, providerEnvelope);
   completedReport.queryContext = queryContext;
   completedReport.dataQuality = queryContext.dataQuality;
   completedReport.evidenceRefs = queryContext.evidence.map(e => e.evidenceId);
+  completedReport.providerMeta = providerEnvelope && providerEnvelope.meta;
   return completedReport;
 }
 
