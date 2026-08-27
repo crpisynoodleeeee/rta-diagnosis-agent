@@ -1,7 +1,7 @@
 # RTA 投放诊断 Agent · Demo v6
 
-> **v6 是当前唯一正式版本（v1-v5 全部废弃；旧 demo 工程 / prototype / Vue+Vite 历史工程不再作为运行入口）**
-> **当前发布状态：V0.8.0 已发布**（Provider 契约、Mock/Replay 数据边界和只读工具接入已完成；真实媒体 API 仍属于 V0.9）
+> **当前正式发布版本：V0.8.0**（Demo 运行入口仍为 `v6`；v1-v5 及旧 prototype / Vue+Vite 工程均已废弃）
+> **V0.8.0 定位：**完成 Provider 契约、Mock/Replay 数据边界和受控只读工具接入；真实媒体 API 只读联调属于 V0.9。
 > - 对齐 PRD v0.2.1（《项目三：RTA 投放诊断 Agent · PRD v0.2.1》）
 > - 对齐《Agent 输入输出结构契约 v0.3》
 > - 对齐《AI 层设计与评测方案》§4.1 接口形状
@@ -9,11 +9,11 @@
 > - LLM 完全可选 · 默认离线模板 · Key 只存在于代理进程环境变量
 > - 含「智能参谋」问答工作台（per-RTA 有限上下文问答 · v0.6 诊断解释 + v0.7 查询能力 + v0.8 Provider 驱动只读工具 · 模板优先 + LLM 可选增强）
 
-> **⚠️ AI 模式 / DeepSeek 接入（v6 final 安全版）**
-> - 默认 `LLM_CONFIG.enabled = false`，演示走**模板分派**（完全离线 + 稳定 + 无网也能跑）
-> - 真实 LLM 是**可选模式**：勾选 UI「AI 模式」后请求本地代理 `llm-proxy.mjs`
-> - DeepSeek Key **只由代理进程**从环境变量 `DEEPSEEK_API_KEY` 读取；前端代码 commit 时不应出现任何真实 Key
-> - LLM 任意失败（代理未启动 / Key 未设置 → 503 LLM_NOT_CONFIGURED / 网络错 / 超时 / JSON 错 / 校验不过 / Golden Case 不符）→ 一律回退模板，抽屉角标保持「模板」
+> **⚠️ AI 模式 / DeepSeek 接入（V0.8.0 Demo 安全边界）**
+> - 公开 Demo 默认 `LLM_CONFIG.enabled = false`，使用**模板分派**，无需联网即可运行
+> - 本地增强模式为**可选能力**：勾选 UI「AI 模式」后请求本机 `llm-proxy.mjs`，不属于公开 Demo 的默认运行链路
+> - DeepSeek Key **只由本地代理进程**从环境变量 `DEEPSEEK_API_KEY` 读取；前端代码、GitHub Pages 和发布文档不保存真实 Key
+> - LLM 任意失败（代理未启动 / Key 未设置 → 503 `LLM_NOT_CONFIGURED` / 网络错 / 超时 / JSON 错 / 校验不过 / Golden Case 不符）→ 一律回退模板，抽屉角标保持「模板」
 
 ---
 
