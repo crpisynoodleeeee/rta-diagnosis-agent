@@ -6,7 +6,7 @@
 > - 对齐《AI 层设计与评测方案》§4.1 接口形状
 > - 零外网依赖 + 双击 file:// 可打开
 > - LLM 完全可选 · 默认离线模板 · Key 只存在于代理进程环境变量
-> - 含「智能参谋」问答工作台（per-RTA 有限上下文问答 · v0.6 诊断解释 + v0.7 Mock 查数 · 模板优先 + LLM 可选增强）
+> - 含「智能参谋」问答工作台（per-RTA 有限上下文问答 · v0.6 诊断解释 + v0.7 查询能力 + v0.8 Provider 驱动只读工具 · 模板优先 + LLM 可选增强）
 
 > **⚠️ AI 模式 / DeepSeek 接入（v6 final 安全版）**
 > - 默认 `LLM_CONFIG.enabled = false`，演示走**模板分派**（完全离线 + 稳定 + 无网也能跑）
@@ -59,7 +59,7 @@ demo/v6/
     └── tailwind.js       # Tailwind Play CDN 自执行版（510KB，已验证完整）
 ```
 
-> **文件清单**：本期主页面 1 文件（index.html）+ 4 个验证脚本 + 1 个代理冒烟脚本 + 2 个本地 vendor（`vue.global.js`、`tailwind.js`）。
+> **文件清单**：本期主页面 1 文件（index.html）+ 6 个验证脚本 + 1 个代理冒烟脚本 + 3 个 Provider/工具模块 + 2 个本地 vendor（`vue.global.js`、`tailwind.js`）。
 
 ---
 
@@ -148,7 +148,7 @@ demo/v6/
 | 入口 | 左侧导航「投放管理 > RTA > 智能参谋」（位于 RTA 实验后、数据中心前） | ✅ |
 | 形态 | per-RTA 有限上下文连续问答工作台（切换 RTA 自动重置会话） | ✅ |
 | 意图分类 | v0.6 诊断解释意图 + v0.7 查询意图：overview / budget / attribution / evidence / excluded / recommendation / observation / rollback / metric_query / trend_query / group_compare / config_query / out_of_scope；另含 execute_refuse（拒绝执行）与数据不足降级 | ✅ |
-| Mock 查询层 | QueryContext 统一当前 RTA、时间范围、实验组/对照组、配置变更和指标数据；所有查询结果带 `EV-*` evidenceId | ✅ |
+| Provider 查询层 | Provider Envelope 驱动 QueryContext，统一当前 RTA、时间范围、实验组/对照组、配置变更和指标数据；查询结果带 `EV-*` evidenceId 与来源元数据 | ✅ |
 | 查询能力 | 当前 RTA 指标查询、趋势对比、实验组/对照组对比、配置变更查询、诊断证据引用 | ✅ |
 | 查询拒答 | 跨 RTA、数据不足、Schema 冲突、证据冲突、执行类请求均拒答或降级模板 | ✅ |
 | 回答来源 | 模板优先（离线可跑）→ 可选 LLM 增强（复用 LLM_CONFIG 通道，独立 prompt + 校验，失败回退模板） | ✅ |
@@ -209,7 +209,7 @@ demo/v6/
 | 无「CPA 过高」标签 | actualCpa=30 ≤ targetCpa=25×1.2=30 | 未触发 | ✅ |
 | 现象标签 | 含「预算未达标」 | 达成率 30% < 60% 触发 | ✅ |
 
-> 自动化校验脚本：`_verify.cjs`（Node.js，10/10 通过）
+> 自动化校验脚本：`_verify.cjs`（Node.js，7/7 通过）
 
 ---
 
@@ -365,7 +365,7 @@ askAssistant(question)
 
 **边界（与诊断抽屉一致）**：执行类请求一律 `execute_refuse` 并引导走人工确认状态机；超范围问题（跨 RTA / 行业大盘 / 实时媒体状态）返回 `out_of_scope` 说明；数据不足返回缺失字段清单，不编造。`_verify_assistant.cjs` 47 个用例覆盖上述全部分支（含 8 项静态扫描断言：前端无 apiKey / 无 Authorization / 无填 Key 提示）。
 
-### 7.9 v0.7 Mock 只读查询层
+### 7.9 v0.7 查询层与 v0.8 Provider 接入
 
 `performDiagnosis(record)` 会为已完成报告挂载 `queryContext`：
 
@@ -375,13 +375,13 @@ askAssistant(question)
 - `configChanges`：配置变更记录；
 - `evidence`：所有可引用证据，稳定编号为 `EV-*`。
 
-智能参谋新增 4 类查询意图：`metric_query`、`trend_query`、`group_compare`、`config_query`，并把原有 `evidence` 回答升级为证据查询。查询层只读、只查当前 RTA，不触发真实媒体 API。若 QueryContext Schema 不完整、趋势点不足、问题提到其他 RTAID，或计算结果与 Mock 字段冲突，参谋会拒答或降级，不编造数字。
+智能参谋新增 4 类查询意图：`metric_query`、`trend_query`、`group_compare`、`config_query`，并把原有 `evidence` 回答升级为证据查询。V0.8 起这些只读工具先通过 Provider Envelope 获取标准化数据，并受 `readonly-query-tools.js` 白名单约束；查询层只查当前 RTA，不触发真实媒体 API。若 Provider 数据过期、缺失、冲突或失败，或 QueryContext Schema 不完整、趋势点不足、问题提到其他 RTAID，参谋会拒答或降级，不编造数字。
 
 LLM 可选增强仍复用本地代理；对查询型回答，校验器要求输出中包含合法 `EV-*` evidenceId，否则丢弃 LLM 结果并回退模板。
 
 ---
 
-## 8. 自查结果（10 项）
+## 8. 自查结果（11 项）
 
 | # | 自查项 | 工具 | 结果 |
 | --- | --- | --- | --- |
@@ -389,7 +389,7 @@ LLM 可选增强仍复用本地代理；对查询型回答，校验器要求输�
 | ② | 无 importmap / type="module" / import | `grep -E "(importmap\|type=\"module\"\|^import )"` | ✅ 0 处 |
 | ③ | Vue UMD 解构 `const { createApp, ... } = Vue` | grep | ✅ L113 |
 | ④ | tailwind.config 含 ink/brand 色板 | grep | ✅ L20/L25 |
-| ⑤ | Golden Case 判定：主因 D9 / 场景 S3 / 80→60 / 无 CPA 过高 | `_verify.cjs` | ✅ 10/10 |
+| ⑤ | Golden Case 判定：主因 D9 / 场景 S3 / 80→60 / 无 CPA 过高 | `_verify.cjs` | ✅ 7/7 |
 | ⑥ | 列表可见「CPA 过高」+「可安全放量」 | `_verify.cjs` | ✅ 两条都可见 |
 | ⑦ | 全局错误捕获（故意抛错见红框） | window.onerror + #__errbox | ✅ 顶部红框渲染 |
 | ⑧ | LLM 路径 10 个用例全过（含 3 项静态扫描：前端无 apiKey / 无 Authorization / 无填 Key 提示；7 项动态 stub：关闭/Golden 对齐/网络错/500/503 LLM_NOT_CONFIGURED/malformed JSON/校验失败） | `_verify_llm.cjs` | ✅ 10/10 |
@@ -410,7 +410,7 @@ LLM 可选增强仍复用本地代理；对查询型回答，校验器要求输�
 7. **术语对照表**：抽屉最底部「📖 术语对照表（黑话翻译）」默认折叠，点击展开可看 10 个术语翻译。
 8. **技术详情**：抽屉倒数第二段「07 · 人工确认 + 技术详情」默认折叠，点击展开可看 RTAID/实验 ID/分桶/请求 ID/日志路径/configBefore/After 等。
 9. **AI 模式演示（需先启动本地代理 + 设置 DEEPSEEK_API_KEY）**：在终端 `export DEEPSEEK_API_KEY=sk-xxx`（Windows PowerShell: `$env:DEEPSEEK_API_KEY='sk-xxx'`）→ `cd demo/v6 && node llm-proxy.mjs` → 浏览器打开 index.html → 勾选右上角「AI 模式 · DeepSeek」→ 任意行点击「发起诊断」→ 抽屉先出现「模板」（灰角标），约 1-3s 后若 LLM 通过 5 项校验 + Golden Case 特判，角标自动变为「AI 生成」并 patch oneLiner / managerSummary / operationsNote / recommendations 文案；任何失败链路（代理未启动 / Key 未设置 503 / 网络断 / 校验不过 / Golden Case 不符）→ 角标保持「模板」，UI 不崩。**前端不会显示、不会要求你填写任何 Key**。
-10. **智能参谋演示**：左侧菜单「投放管理 > RTA > 智能参谋」→ 选择 RTAID → 点击右侧推荐问题（如"这个 RTA 现在有什么异常？"）→ 模板秒回；追问"为什么预算没有跑出去？""建议调整什么，调整后观察哪些指标？""回滚条件是什么？" → 命中诊断解释回答；输入"当前 CPA、转化数和 QPS 指标是多少？""参竞率趋势从开始到最后下降了多少？""对照组和实验组对比如何？""配置变更记录是什么？" → 命中 v0.7 QueryContext 查数回答，并显示 `EV-*` 证据引用；输入"直接帮我加预算" → 触发 execute_refuse 拒绝执行并引导走人工确认流程；输入"别的 RTA 呢？" → out_of_scope 说明只能回答当前 RTA；切换 RTA → 会话自动重置。
+10. **智能参谋演示**：左侧菜单「投放管理 > RTA > 智能参谋」→ 选择 RTAID → 点击右侧推荐问题（如"这个 RTA 现在有什么异常？"）→ 模板秒回；追问"为什么预算没有跑出去？""建议调整什么，调整后观察哪些指标？""回滚条件是什么？" → 命中诊断解释回答；输入"当前 CPA、转化数和 QPS 指标是多少？""参竞率趋势从开始到最后下降了多少？""对照组和实验组对比如何？""配置变更记录是什么？" → 命中 Provider 驱动的只读查询回答，并显示 `EV-*` 证据引用；输入"直接帮我加预算" → 触发 execute_refuse 拒绝执行并引导走人工确认流程；输入"别的 RTA 呢？" → out_of_scope 说明只能回答当前 RTA；切换 RTA → 会话自动重置。
 
 ---
 
@@ -429,7 +429,7 @@ LLM 可选增强仍复用本地代理；对查询型回答，校验器要求输�
 
 1. **第三方字段【待核验】**：BidURL、媒体侧 RTAID 映射、SecretKey 等媒体侧字段保留 mock 标注，真实接入前需核验。
 2. **执行日志缺回放**：本期不做单次请求的全链路回放（按 PRD §3.2 不纳入）。
-3. **场景叙事模板**：6 个场景（S0/S1/S2/S3/S4/S5/S6）均有独立完整叙事分支（oneLiner / managerSummary / operationsNote / causes / affectedScope / recommendations 七段式），与 S3 Golden Case 同等深度。其中 S2 命中率下降提供 2 套建议（人群回滚 + 字段放宽），S4 出价/竞价提供 2 套建议（出价回调 + 小流量试探）；S1/S5/S6 明确体现"不调 RTA 策略 / 先排障 / 先修回传"的边界判断。末尾保留一段防御性兜底，仅用于未匹配 sceneId 的情况（新增场景未同步时保护，正常流程不会进入）。
+3. **场景叙事模板**：8 个场景（S0-S7）均有独立完整叙事分支（oneLiner / managerSummary / operationsNote / causes / affectedScope / recommendations 七段式），与 S3 Golden Case 同等深度。其中 S2 命中率下降提供 2 套建议（人群回滚 + 字段放宽），S4 出价/竞价提供 2 套建议（出价回调 + 小流量试探）；S1/S5/S6 明确体现"不调 RTA 策略 / 先排障 / 先修回传"的边界判断。末尾保留一段防御性兜底，仅用于未匹配 sceneId 的情况（新增场景未同步时保护，正常流程不会进入）。
 4. **AI 层接入方式（v6 final 安全版）**：方案 B = 浏览器 → 本地代理 `llm-proxy.mjs` → DeepSeek。当前 `LLM_CONFIG.enabled = false`，AI 层仅返回 `buildTemplateNarrative` 输出，与 v6 上一版本行为完全一致；勾选 UI「AI 模式」后请求本地代理。**前端不持有、不显示、不要求填写任何 Key**——Key 仅存在于代理进程的 `DEEPSEEK_API_KEY` 环境变量（启动时显式标注 Key 状态，但不打印 Key 内容）。函数签名对齐《AI 层设计与评测方案》§4.1，可无痛替换为真实 LLM 调用。
 5. **跨媒体字段差异**：分桶方式（平台/客户）、出价方式（系数/CPA/CPC）已在对象模型层覆盖，但具体媒体差异（VIVO 毫分、荣耀 priceRate 等）保留 mock 标注。
 6. **LLM 接入为可选开关**：默认关闭走模板，演示稳定无网也能跑；切换至真实 LLM 需要"运维在启动代理前 `export DEEPSEEK_API_KEY=<key>` → `node llm-proxy.mjs` → 浏览器勾选 AI 模式"。LLM 失败 / 校验不过 / 超时 / 网络错 / JSON 错 / Golden Case 不符 / 代理未启动 (ConnectionRefused) / Key 未设置 (503 LLM_NOT_CONFIGURED) 一律回退模板，`_verify_llm.cjs` 10/10 覆盖所有路径（含 3 项静态扫描断言：前端无 apiKey / 无 Authorization 头 / 无"前端填 Key"提示）。`llm-proxy.mjs` 是核心代码，**前端调用是可选的，不影响模板演示路径**。**Key 严禁出现在前端代码或截图；真实产品中应使用服务端 secret manager。**
