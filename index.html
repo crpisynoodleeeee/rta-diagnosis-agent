@@ -108,11 +108,18 @@
   })();
 </script>
 
+<!-- V0.8 data boundary: provider contracts load before the synchronous Demo logic. -->
+<script src="./data/media-data-provider.js"></script>
+<script src="./data/mock-media-data-provider.js"></script>
+<script src="./data/readonly-query-tools.js"></script>
+
 <!-- 主应用（普通 script + const { createApp, ... } = Vue 解构） -->
 <script>
 'use strict';
 
 const { createApp, ref, reactive, computed, watch, onMounted, nextTick } = Vue;
+const PROVIDER_API = typeof RTADataProvider !== 'undefined' ? RTADataProvider : null;
+const READONLY_TOOL_API = typeof RTAReadOnlyTools !== 'undefined' ? RTAReadOnlyTools : null;
 
 /* ═══════════════════════════════════════════════════════════════════════
  * 0.5 LLM_CONFIG（DeepSeek AI 层接入 · 方案 B：模板兜底 + LLM 异步叠加）
@@ -572,6 +579,63 @@ const MOCK_RTA_LIST = [
     targetCpa: 25           // 达标
   }
 ];
+
+const MOCK_PROVIDER = PROVIDER_API && PROVIDER_API.MockMediaDataProvider
+  ? new PROVIDER_API.MockMediaDataProvider(MOCK_RTA_LIST)
+  : null;
+
+function listDataRecords() {
+  return MOCK_PROVIDER ? MOCK_PROVIDER.listRecords() : MOCK_RTA_LIST;
+}
+
+function getDataRecord(rtaId) {
+  if (MOCK_PROVIDER) return MOCK_PROVIDER.getRecord(rtaId);
+  return MOCK_RTA_LIST.find(r => r.rtaId === rtaId) || null;
+}
+
+function getProviderRecord(record) {
+  return record && MOCK_PROVIDER ? (MOCK_PROVIDER.getRecord(record.rtaId) || record) : record;
+}
+
+function providerRequestFor(record) {
+  return {
+    rtaId: record.rtaId,
+    timeRange: { start: '2026-08-14 00:00:00', end: '2026-08-14 13:30:00' },
+    dataScope: 'current_rta_only'
+  };
+}
+
+function getProviderEnvelope(record) {
+  return record && MOCK_PROVIDER ? MOCK_PROVIDER.getDataEnvelope(providerRequestFor(record)) : null;
+}
+
+function mergeProviderEnvelopeIntoRecord(record, envelope) {
+  if (!envelope) return record;
+  const config = envelope.configSnapshot || {};
+  const metrics = envelope.metricBundle || {};
+  const budget = metrics.budget || {};
+  const rta = config.rtaid || {};
+  return Object.assign({}, record, {
+    media: rta.media === undefined ? record.media : rta.media,
+    rtaInternalId: rta.rtaInternalId || record.rtaInternalId,
+    bidUrl: rta.bidUrl || record.bidUrl,
+    status: rta.status || record.status,
+    qpsConfig: rta.qpsConfig === undefined ? record.qpsConfig : rta.qpsConfig,
+    qpsUsed: rta.qpsUsed === undefined ? record.qpsUsed : rta.qpsUsed,
+    qpsRemaining: rta.qpsRemaining === undefined ? record.qpsRemaining : rta.qpsRemaining,
+    boundAccounts: config.boundAccounts === undefined ? record.boundAccounts : config.boundAccounts,
+    strategies: config.strategies || [], experiment: config.experiment || {},
+    groups: config.groups || [], bucketMode: config.bucketMode, changes: config.changes || [],
+    coreMetrics: metrics.coreMetrics || {}, usageMetrics: metrics.usageMetrics || {},
+    trend: metrics.trend || [], logSummary: metrics.logSummary || {}, attribution: metrics.attribution || {},
+    budget: Object.assign({}, record.budget || {}, budget),
+    dailyBudget: budget.dailyBudget === undefined ? record.dailyBudget : budget.dailyBudget,
+    actualCost: budget.actualCost === undefined ? record.actualCost : budget.actualCost,
+    conversionCount: budget.conversionCount === undefined ? record.conversionCount : budget.conversionCount,
+    actualCpa: budget.actualCpa === undefined ? record.actualCpa : budget.actualCpa,
+    targetCpa: budget.targetCpa === undefined ? record.targetCpa : budget.targetCpa
+  });
+}
 
 /* ═══════════════════════════════════════════════════════════════════════
  * 3. 规则引擎 D1-D14（独立函数 + signals）
@@ -1545,7 +1609,8 @@ function addEvidence(list, evidenceId, type, label, path, value, text) {
   });
 }
 
-function buildQueryContext(record, report) {
+function buildQueryContext(record, report, providerEnvelope) {
+  record = mergeProviderEnvelopeIntoRecord(record, providerEnvelope);
   const evidence = [];
   const metrics = {};
 
@@ -1769,7 +1834,7 @@ function validateQueryContextSchema(ctx) {
 
 function detectOtherRtaInQuestion(question, currentRtaId) {
   const q = String(question || '');
-  return MOCK_RTA_LIST.find(r => r.rtaId !== currentRtaId && q.indexOf(r.rtaId) >= 0) || null;
+  return listDataRecords().find(r => r.rtaId !== currentRtaId && q.indexOf(r.rtaId) >= 0) || null;
 }
 
 function metricKeysFromQuestion(question) {
@@ -1800,7 +1865,7 @@ function trendMetricFromQuestion(question) {
 function ensureQueryContext(report, record) {
   if (report && report.queryContext) return report.queryContext;
   if (!report || report.status !== 'completed') return null;
-  return buildQueryContext(record, report);
+  return buildQueryContext(record, report, getProviderEnvelope(record));
 }
 
 function makeQueryRefusal(status, reason, detail, evidenceIds) {
@@ -1827,14 +1892,21 @@ function runAssistantQuery(question, intent, report, record) {
     return makeQueryRefusal('insufficient', 'schema_insufficient', ctx.dataQuality.missingFields.concat(ctx.dataQuality.schemaErrors).join('、'), ctx.evidence.map(e => e.evidenceId));
   }
 
-  if (intent === 'metric_query') return queryMetrics(ctx, metricKeysFromQuestion(question));
-  if (intent === 'trend_query') return queryTrend(ctx, trendMetricFromQuestion(question));
-  if (intent === 'group_compare') return queryGroupCompare(ctx);
-  if (intent === 'config_query') return queryConfigChanges(ctx);
-  if (intent === 'evidence') return queryDiagnosisEvidence(ctx);
-  if (intent === 'budget') return queryMetrics(ctx, ['dailyBudget','actualCost','gap','achievementRate','bidRateControl','bidRateTreatment']);
-  if (intent === 'attribution') return queryMetrics(ctx, ['callbackSuccessRate','callbackLatency','missingFieldRate','actualCpa','targetCpa']);
-  return null;
+  const execute = () => {
+    if (intent === 'metric_query') return queryMetrics(ctx, metricKeysFromQuestion(question));
+    if (intent === 'trend_query') return queryTrend(ctx, trendMetricFromQuestion(question));
+    if (intent === 'group_compare') return queryGroupCompare(ctx);
+    if (intent === 'config_query') return queryConfigChanges(ctx);
+    if (intent === 'evidence') return queryDiagnosisEvidence(ctx);
+    if (intent === 'budget') return queryMetrics(ctx, ['dailyBudget','actualCost','gap','achievementRate','bidRateControl','bidRateTreatment']);
+    if (intent === 'attribution') return queryMetrics(ctx, ['callbackSuccessRate','callbackLatency','missingFieldRate','actualCpa','targetCpa']);
+    return null;
+  };
+  const toolName = READONLY_TOOL_API && READONLY_TOOL_API.toolNameForIntent(intent);
+  if (toolName && MOCK_PROVIDER) {
+    return READONLY_TOOL_API.createReadOnlyToolRunner(MOCK_PROVIDER).run(toolName, providerRequestFor(record), execute);
+  }
+  return execute();
 }
 
 function queryMetrics(ctx, keys) {
@@ -2041,6 +2113,7 @@ function buildQueryAnswer(queryResult, intent, report, record) {
  * ═══════════════════════════════════════════════════════════════════════ */
 
 function performDiagnosis(record) {
+  record = getProviderRecord(record);
   // Phase 0 数据完整性检查
   const missing = [];
   if (!record.rtaId) missing.push('rtaId');
@@ -2119,10 +2192,12 @@ function performDiagnosis(record) {
     technical,
     _aiSource: ai._source || 'template'
   };
-  const queryContext = buildQueryContext(record, completedReport);
+  const providerEnvelope = getProviderEnvelope(record);
+  const queryContext = buildQueryContext(record, completedReport, providerEnvelope);
   completedReport.queryContext = queryContext;
   completedReport.dataQuality = queryContext.dataQuality;
   completedReport.evidenceRefs = queryContext.evidence.map(e => e.evidenceId);
+  completedReport.providerMeta = providerEnvelope && providerEnvelope.meta;
   return completedReport;
 }
 
@@ -2418,7 +2493,7 @@ function validateAssistantOutput(output, intent, report, record, queryResult) {
   const answer = output.answer;
 
   // 回答不得包含其他 RTAID
-  for (const r of MOCK_RTA_LIST) {
+  for (const r of listDataRecords()) {
     if (r.rtaId !== record.rtaId && answer.indexOf(r.rtaId) >= 0) {
       return { ok: false, reason: 'contains_other_rtaId' };
     }
@@ -2693,7 +2768,7 @@ const app = createApp({
     ]);
 
     // 列表数据（预处理异常类型 + 现象标签）
-    const rtaList = reactive(MOCK_RTA_LIST.map(r => {
+    const rtaList = reactive(listDataRecords().map(r => {
       const pre = preClassify(r);
       return { ...r, _pre: pre };
     }));
@@ -2710,7 +2785,7 @@ const app = createApp({
     // - 切换 RTA 时 clear() 上一 RTA 会话与诊断引用，只维护当前 RTA 的活动会话
     const currentView = ref('list');
     const selectedMenuId = ref('rtaid');
-    const assistantRtaId = ref(MOCK_RTA_LIST[0].rtaId);
+    const assistantRtaId = ref(listDataRecords()[0].rtaId);
     const assistantInput = ref('');
     const assistantListEl = ref(null);
     const isAsking = ref(false);
@@ -2718,7 +2793,7 @@ const app = createApp({
     const chatSessions = reactive(new Map());
     const MAX_TURNS = 8; // 最近 8 轮（1 轮 = 1 条 user + 1 条 assistant）
 
-    const assistantRta = computed(() => MOCK_RTA_LIST.find(r => r.rtaId === assistantRtaId.value) || MOCK_RTA_LIST[0]);
+    const assistantRta = computed(() => getDataRecord(assistantRtaId.value) || listDataRecords()[0]);
     const currentSession = computed(() => getOrCreateSession(assistantRtaId.value));
 
     // 第一版固定 4 条推荐问题（进入诊断结果后可追问 5-6 条）
@@ -2760,7 +2835,7 @@ const app = createApp({
 
     function ensureSessionDiagnosis(sess) {
       if (sess.diagnosis) return sess.diagnosis;
-      const r = MOCK_RTA_LIST.find(x => x.rtaId === sess.rtaId);
+      const r = getDataRecord(sess.rtaId);
       if (!r) return null;
       sess.diagnosis = performDiagnosis(r);
       return sess.diagnosis;
@@ -2789,7 +2864,7 @@ const app = createApp({
         scrollAssistantToBottom();
 
         const report = ensureSessionDiagnosis(sess);
-        const record = MOCK_RTA_LIST.find(x => x.rtaId === sess.rtaId);
+        const record = getDataRecord(sess.rtaId);
 
         if (!report || !record) {
           sess.messages.push({ role: 'assistant', text: '该 RTA 数据不可用，请尝试切换其他对象。', ts: nowStr() });
@@ -2942,7 +3017,7 @@ const app = createApp({
     }
 
     function openDiagnosis(rtaId, forceInsufficient) {
-      const rec = MOCK_RTA_LIST.find(r => r.rtaId === rtaId);
+      const rec = getDataRecord(rtaId);
       if (!rec) return;
       drawerTarget.value = rec;
       drawerOpen.value = true;
@@ -3082,7 +3157,10 @@ const app = createApp({
   <header class="bg-white border-b border-ink-200 h-10 flex items-center px-5 sticky top-0 z-30">
     <div class="font-semibold text-ink-800 text-[14px] tracking-wide">GROWTHPLATFORM</div>
     <div class="ml-3 text-[12px] text-ink-500">· RTA 投放诊断 Agent</div>
-    <div class="ml-auto text-[12px] text-ink-400">v6 Demo · 模拟数据</div>
+    <div class="ml-auto flex items-center gap-2 text-[12px] text-ink-400">
+      <span>v6 Demo · 模拟数据</span>
+      <span class="inline-flex items-center border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">V0.8.0 · 已发布</span>
+    </div>
   </header>
 
   <div class="flex">
