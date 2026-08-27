@@ -25,4 +25,4 @@ The public Demo does not require an LLM. To run the optional local DeepSeek path
 
 ## Release checks
 
-Run the four offline validation scripts from `demo/v6` before publishing. These scripts use Mock data and stubs; they do not prove production media integration or business impact.
+Run the five V0.7 validation scripts and `_verify_v08_provider.cjs` from `demo/v6` before publishing. These scripts use Mock data and stubs; they do not prove production media integration or business impact.

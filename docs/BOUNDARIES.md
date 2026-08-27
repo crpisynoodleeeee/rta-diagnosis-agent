@@ -2,7 +2,7 @@
 
 ## Current release
 
-This repository publishes RTA Diagnosis Agent Demo v6 Final. The product documents are PRD v0.2.1 and Agent input/output contract v0.3.
+This repository publishes RTA Diagnosis Agent v0.7.0, the Queryable Mock Evidence Layer. The product documents are PRD v0.2.1 and Agent input/output contract v0.3.
 
 ## Included
 

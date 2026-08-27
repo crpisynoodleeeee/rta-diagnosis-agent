@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.7.0 - Unreleased
+## v0.7.0 - 2026-08-26
 
 ### Added
 
@@ -38,4 +38,4 @@
 
 ## Next
 
-The next planned iteration is real LLM-backed analysis and controlled tool-use evaluation. It will remain evidence-constrained and read-only; real media API integration requires a separate permission, field-mapping and replay-validation track.
+V0.8 introduces a unified read-only `MediaDataProvider` contract, Mock Provider extraction, normalized data metadata and replay-based Adapter validation. Real staging API integration remains planned for V0.9.
