@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.8.0 - 2026-08-27
+
+### Added
+
+- Unified read-only `MediaDataProvider` contract and `ProviderEnvelope`.
+- `MockMediaDataProvider` extraction for Demo record access.
+- `ReplayMediaAdapter` with normalized media-shaped responses, cache, freshness and typed degradation.
+- Read-only tool whitelist for metrics, trends, group comparison, configuration changes and diagnosis evidence.
+- Provider provenance and quality metadata retained through query results and `EV-*` evidence.
+- `_verify_v08_provider.cjs` with 34 validation cases.
+
+### Boundaries
+
+- Data remains synthetic Mock/Replay data; no real media API or production account is connected.
+- No budget, bid or strategy write operation is introduced.
+- Production credentials, staging integration, monitoring and tenant governance remain planned for V0.9.
+
 ## v0.7.0 - 2026-08-26
 
 ### Added

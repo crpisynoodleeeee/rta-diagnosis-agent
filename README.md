@@ -84,6 +84,8 @@ node _verify_v08_provider.cjs
 
 五组 V0.7 脚本覆盖 Golden Case、5 类扩展场景、10 条 LLM 路径、47 条智能参谋用例和 30 条 v0.7 查询层用例；V0.8 Provider 脚本覆盖契约、Mock 抽离、回放标准化、缓存、新鲜度、只读工具白名单和错误降级（34/34）。测试使用 Mock 数据和 Stub，不代表真实媒体接口联调或业务收益。
 
+V0.8.0 已合并到 `main` 并准备发布；真实 Staging API 只读联调、生产凭证、监控和租户治理属于 V0.9。
+
 ## 部署
 
 ```powershell
