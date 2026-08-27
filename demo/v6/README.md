@@ -1,6 +1,7 @@
 # RTA 投放诊断 Agent · Demo v6
 
 > **v6 是当前唯一正式版本（v1-v5 全部废弃；旧 demo 工程 / prototype / Vue+Vite 历史工程不再作为运行入口）**
+> **当前发布状态：V0.8.0 已发布**（Provider 契约、Mock/Replay 数据边界和只读工具接入已完成；真实媒体 API 仍属于 V0.9）
 > - 对齐 PRD v0.2.1（《项目三：RTA 投放诊断 Agent · PRD v0.2.1》）
 > - 对齐《Agent 输入输出结构契约 v0.3》
 > - 对齐《AI 层设计与评测方案》§4.1 接口形状
@@ -147,7 +148,7 @@ demo/v6/
 | --- | --- | --- |
 | 入口 | 左侧导航「投放管理 > RTA > 智能参谋」（位于 RTA 实验后、数据中心前） | ✅ |
 | 形态 | per-RTA 有限上下文连续问答工作台（切换 RTA 自动重置会话） | ✅ |
-| 意图分类 | v0.6 诊断解释意图 + v0.7 查询意图：overview / budget / attribution / evidence / excluded / recommendation / observation / rollback / metric_query / trend_query / group_compare / config_query / out_of_scope；另含 execute_refuse（拒绝执行）与数据不足降级 | ✅ |
+| 意图分类 | v0.6 诊断解释意图 + v0.7 查询意图：overview / budget / attribution / evidence / excluded / recommendation / observation / rollback / metric_query / trend_query / group_compare / config_query / out_of_scope；V0.8 通过只读工具白名单承载指标、趋势、组间、变更和诊断证据；另含 execute_refuse（拒绝执行）与数据不足降级 | ✅ |
 | Provider 查询层 | Provider Envelope 驱动 QueryContext，统一当前 RTA、时间范围、实验组/对照组、配置变更和指标数据；查询结果带 `EV-*` evidenceId 与来源元数据 | ✅ |
 | 查询能力 | 当前 RTA 指标查询、趋势对比、实验组/对照组对比、配置变更查询、诊断证据引用 | ✅ |
 | 查询拒答 | 跨 RTA、数据不足、Schema 冲突、证据冲突、执行类请求均拒答或降级模板 | ✅ |
@@ -157,7 +158,7 @@ demo/v6/
 | 边界 | 拒绝执行类请求；超范围问题（跨 RTA / 行业大盘 / 实时媒体状态）明确说明不能回答；数据不足不编造 | ✅ |
 | 自动化验证 | `_verify_assistant.cjs`：47 个用例（8 项 forbidden 静态扫描 + 9 项 required 断言 + 30 项动态用例） | ✅ |
 
-> 智能参谋只回答**当前所选 RTA 在当前 Mock 数据范围内**的诊断、分析和只读查数问题；它是诊断归因层的"追问/解释 + 有证据查数"入口，不构成通用问数 Agent（不做跨 RTA 历史查询、不做行业大盘、不直接执行任何配置变更）。
+> 智能参谋只回答**当前所选 RTA 在当前 Mock/Replay 数据范围内**的诊断、分析和只读查数问题；它是诊断归因层的"追问/解释 + 有证据查数"入口，不构成通用问数 Agent（不做跨 RTA 历史查询、不做行业大盘、不直接执行任何配置变更）。
 
 ---
 
