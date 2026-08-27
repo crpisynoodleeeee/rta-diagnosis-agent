@@ -57,7 +57,7 @@ AI/模板诊断输出
 | 文档 | 用途 |
 | --- | --- |
 | [v0.7.0 发布说明](docs/releases/v0.7.0.md) | 当前版本、Mock 查询层、证据编号和专项验收 |
-| [V0.8 Provider 契约](docs/architecture/v0.8-provider-contract.md) | 统一数据 Provider、Adapter 边界和分批迁移方案 |
+| [V0.8 Provider 契约](docs/architecture/v0.8-provider-contract.md) | 统一数据 Provider、Mock 抽离、Adapter 边界和分批迁移方案 |
 | [v0.6.0 发布说明](docs/releases/v0.6.0.md) | 历史版本、验证范围和已知限制 |
 | [PRD v0.2.1](PRD%20v0.2.1.md) | 产品范围、页面、状态机和验收标准 |
 | [Agent 输入输出结构契约 v0.3](Agent输入输出结构契约%20v0.3.md) | 输入、输出和字段契约 |

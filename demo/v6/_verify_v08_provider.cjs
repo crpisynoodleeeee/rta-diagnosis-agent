@@ -9,6 +9,9 @@ const {
   createProviderMeta,
   validateEnvelope
 } = require('./data/media-data-provider.js');
+const { MockMediaDataProvider } = require('./data/mock-media-data-provider.js');
+const fs = require('fs');
+const path = require('path');
 
 let passed = 0;
 
@@ -48,6 +51,33 @@ const meta = {
   freshnessSeconds: 0,
   qualityStatus: 'ok',
   missingFields: []
+};
+
+const mockRecord = {
+  rtaId: 'mock-rta-001',
+  rtaInternalId: 'RTA-RES-001',
+  media: 'mock',
+  bidUrl: 'https://mock.invalid/rta/001',
+  status: '上线',
+  qpsConfig: 1000,
+  qpsUsed: 100,
+  qpsRemaining: 900,
+  boundAccounts: 1,
+  experiment: { id: 'EXP-MOCK-001' },
+  groups: [{ groupId: 'G-C', groupType: 'control', buckets: [1] }, { groupId: 'G-T', groupType: 'treatment', buckets: [2] }],
+  bucketMode: 'platform',
+  changes: [],
+  strategies: [],
+  coreMetrics: { currentQps: 100 },
+  usageMetrics: { totalRequests: 1000 },
+  trend: [],
+  attribution: { callbackSuccessRate: 0.99 },
+  budget: { dailyBudget: 100, actualCost: 80 },
+  dailyBudget: 100,
+  actualCost: 80,
+  conversionCount: 4,
+  actualCpa: 20,
+  targetCpa: 25
 };
 
 class TestProvider extends MediaDataProvider {
@@ -132,6 +162,43 @@ check('envelope rejects stale provider schema', () => {
   assert.strictEqual(result.ok, false);
   assert(result.errors.includes('meta.schemaVersion'));
 });
+check('mock provider lists isolated records', () => {
+  const provider = new MockMediaDataProvider([mockRecord]);
+  const listed = provider.listRecords();
+  assert.strictEqual(listed.length, 1);
+  listed[0].rtaId = 'changed';
+  assert.strictEqual(provider.getRecord(mockRecord.rtaId).rtaId, mockRecord.rtaId);
+});
+check('mock provider normalizes config snapshot', () => {
+  const result = new MockMediaDataProvider([mockRecord]).getConfigSnapshot({
+    rtaId: mockRecord.rtaId,
+    timeRange: request.timeRange
+  });
+  assert.strictEqual(result.data.rtaid.rtaId, mockRecord.rtaId);
+  assert.strictEqual(result.data.groups.length, 2);
+  assert.strictEqual(result.meta.sourceRecordId, 'mock:' + mockRecord.rtaId);
+});
+check('mock provider normalizes metric bundle and CPA', () => {
+  const result = new MockMediaDataProvider([mockRecord]).getMetricBundle({
+    rtaId: mockRecord.rtaId,
+    timeRange: request.timeRange
+  });
+  assert.strictEqual(result.data.budget.actualCpa, 20);
+  assert.strictEqual(result.data.budget.targetCpa, 25);
+  assert.strictEqual(result.data.coreMetrics.currentQps, 100);
+});
+check('mock provider missing record is typed', () => {
+  assert.throws(() => new MockMediaDataProvider([mockRecord]).getConfigSnapshot({
+    rtaId: 'missing', timeRange: request.timeRange
+  }), error => error instanceof ProviderError && error.code === ERROR_CODES.NOT_FOUND);
+});
+check('demo loads both provider scripts and uses provider record hook', () => {
+  const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+  assert(html.includes('src="./data/media-data-provider.js"'));
+  assert(html.includes('src="./data/mock-media-data-provider.js"'));
+  assert(html.includes('new PROVIDER_API.MockMediaDataProvider(MOCK_RTA_LIST)'));
+  assert(html.includes('record = getProviderRecord(record);'));
+});
 
 (async () => {
   await checkAsync('base provider methods fail as not implemented', async () => {
@@ -149,7 +216,7 @@ check('envelope rejects stale provider schema', () => {
     assert.strictEqual(validateEnvelope(result).ok, true);
   });
 
-  const total = 14;
+  const total = 19;
   console.log('V0.8 Provider verification: ' + passed + ' / ' + total + ' passed');
   if (passed !== total) process.exitCode = 1;
 })();

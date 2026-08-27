@@ -47,9 +47,10 @@ demo/v6/
 ├── _verify_llm.cjs       # LLM 路径 10 个 stub 验证（Node.js + fetch stub，零外网）
 ├── _verify_assistant.cjs # 智能参谋 47 个 stub 验证（静态扫描 + 动态用例，零外网）
 ├── _verify_v07.cjs       # v0.7 QueryContext / Mock 只读查询层 30 个验收用例
-├── _verify_v08_provider.cjs # v0.8 MediaDataProvider 契约验收
+├── _verify_v08_provider.cjs # v0.8 MediaDataProvider / Mock Provider 19 个验收用例
 ├── data/
-│   └── media-data-provider.js # 统一只读 Provider 基类、元数据和错误模型
+│   ├── media-data-provider.js # 统一只读 Provider 基类、元数据和错误模型
+│   └── mock-media-data-provider.js # Mock 数据 Provider 与标准化读取
 ├── _proxy-test.sh        # llm-proxy 启动冒烟测试脚本（可选运维工具）
 └── vendor/
     ├── vue.global.js     # Vue 3.4.38 UMD（525KB，已验证完整）
@@ -392,7 +393,7 @@ LLM 可选增强仍复用本地代理；对查询型回答，校验器要求输�
 | ⑧ | LLM 路径 10 个用例全过（含 3 项静态扫描：前端无 apiKey / 无 Authorization / 无填 Key 提示；7 项动态 stub：关闭/Golden 对齐/网络错/500/503 LLM_NOT_CONFIGURED/malformed JSON/校验失败） | `_verify_llm.cjs` | ✅ 10/10 |
 | ⑨ | 智能参谋 47 个用例全过（8 项 forbidden 静态扫描 + 9 项 required 断言 + 30 项动态用例，覆盖诊断解释意图 + 执行拒绝 + 超范围 + 数据不足） | `_verify_assistant.cjs` | ✅ 47/47 |
 | ⑩ | v0.7 查询层 30 个用例全过（Schema / evidenceId / 指标 / 趋势 / 组间 / 配置 / RTA 隔离 / 冲突拒答 / LLM 查询证据校验） | `_verify_v07.cjs` | ✅ 30/30 |
-| ⑪ | v0.8 Provider 契约通过（只读能力 / current-RTA 范围 / 标准错误 / Envelope Schema） | `_verify_v08_provider.cjs` | ✅ 14/14 |
+| ⑪ | v0.8 Provider 通过（只读能力 / current-RTA 范围 / 标准错误 / Envelope Schema / Mock 抽离与页面接入） | `_verify_v08_provider.cjs` | ✅ 19/19 |
 
 ---
 
