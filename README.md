@@ -1,7 +1,8 @@
-# RTA 投放诊断 Agent · Demo v6
+# RTA 投放诊断 Agent · Demo 
 
-> **当前正式发布版本：V0.8.0**（Demo 运行入口仍为 `v6`；v1-v5 及旧 prototype / Vue+Vite 工程均已废弃）
-> **V0.8.0 定位：**完成 Provider 契约、Mock/Replay 数据边界和受控只读工具接入；真实媒体 API 只读联调属于 V0.9。
+> **当前正式发布版本：V0.9.0**（Demo 运行入口仍为 `v6`；v1-v5 及旧 prototype / Vue+Vite 工程均已废弃）
+> **V0.9.0 定位：**完成服务端 Staging 只读接入准备、凭证/脱敏/审计/监控基础模块和离线 32/32 验收；真实 Staging 联调仍待 API 文档、测试权限与明确授权。
+> **当前页面边界：**公开 Demo 的功能与数据路径保持 V0.8 离线 Mock/Replay 能力，不连接真实媒体 API，不包含真实账户、凭证或写操作。
 > - 对齐 PRD v0.2.1（《项目三：RTA 投放诊断 Agent · PRD v0.2.1》）
 > - 对齐《Agent 输入输出结构契约 v0.3》
 > - 对齐《AI 层设计与评测方案》§4.1 接口形状
@@ -9,7 +10,7 @@
 > - LLM 完全可选 · 默认离线模板 · Key 只存在于代理进程环境变量
 > - 含「智能参谋」问答工作台（per-RTA 有限上下文问答 · v0.6 诊断解释 + v0.7 查询能力 + v0.8 Provider 驱动只读工具 · 模板优先 + LLM 可选增强）
 
-> **⚠️ AI 模式 / DeepSeek 接入（V0.8.0 Demo 安全边界）**
+> **⚠️ AI 模式 / DeepSeek 接入（V0.9.0 发布后的 Demo 安全边界，运行方式不变）**
 > - 公开 Demo 默认 `LLM_CONFIG.enabled = false`，使用**模板分派**，无需联网即可运行
 > - 本地增强模式为**可选能力**：勾选 UI「AI 模式」后请求本机 `llm-proxy.mjs`，不属于公开 Demo 的默认运行链路
 > - DeepSeek Key **只由本地代理进程**从环境变量 `DEEPSEEK_API_KEY` 读取；前端代码、GitHub Pages 和发布文档不保存真实 Key
