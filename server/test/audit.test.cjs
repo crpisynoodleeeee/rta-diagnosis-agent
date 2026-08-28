@@ -1,0 +1,14 @@
+const assert = require('assert');
+const audit = require('../audit.js');
+const monitor = require('../monitor.js');
+let passed = 0;
+function test(name, fn) { try { fn(); passed++; console.log('  PASS ' + name); } catch (e) { console.log('  FAIL ' + name + ': ' + e.message); } }
+function entry(result, errorType = null, durationMs = 12) { return { caller:'readonly-tools', provider:'synthetic', interface:'getDataEnvelope', rta:'synthetic-rta', time:'2026-08-28T00:00:00.000Z', durationMs, result, errorType }; }
+test('audit/jsonl-eight-fields', () => { let line; audit.setAuditSink(x => { line=x; }); audit.recordCall(entry('success')); const o=JSON.parse(line); assert.deepStrictEqual(Object.keys(o), ['caller','provider','interface','rta','time','durationMs','result','errorType']); });
+test('audit/success-and-failure', () => { let n=0; audit.setAuditSink(()=>n++); ['success','stale','partial','insufficient','failure'].forEach(x=>audit.recordCall(entry(x, x==='failure'?'TIMEOUT':null))); assert.strictEqual(n,5); });
+test('audit/no-sensitive-payload', () => { let line; audit.setAuditSink(x=>line=x); audit.recordCall({...entry('success'), token:'secret', body:{accountId:'real'}, url:'https://x.test/?budget=123'}); assert.ok(!line.includes('secret')&&!line.includes('accountId')&&!line.includes('budget=123')); });
+test('audit/monitor-six-metrics', () => { monitor.reset(); monitor.recordResult({result:'success',durationMs:10}); monitor.recordResult({result:'partial',durationMs:30}); monitor.recordResult({result:'failure',errorType:'TIMEOUT'}); monitor.recordRetry('RATE_LIMITED'); const s=monitor.snapshot(); assert.strictEqual(s.successRate,1/3); assert.strictEqual(s.usableRate,2/3); assert.ok(s.providerDurationMs.p50>=0&&s.timeout.count===1&&s.rateLimited>=1&&s.quality.failure===1); assert.deepStrictEqual(s.labels.sort(),['errorType','interface','platform','provider','result']); });
+test('audit/quality-observability', () => { monitor.reset(); monitor.recordResult({result:'stale'}); monitor.recordResult({result:'partial',missingFields:['a','b']}); monitor.recordResult({result:'insufficient',errorType:'DATA_INSUFFICIENT'}); monitor.recordResult({result:'failure',errorType:'PERMISSION_DENIED'}); const s=monitor.snapshot(); assert.strictEqual(s.quality.stale,1); assert.strictEqual(s.quality.partial,1); assert.strictEqual(s.quality.insufficient,1); assert.strictEqual(s.quality.failure,1); assert.strictEqual(s.missingFieldsCount,2); assert.strictEqual(s.permission.permissionDenied,1); });
+test('audit/retry-single-terminal', () => { monitor.reset(); monitor.recordRetry('RATE_LIMITED'); monitor.recordRetry('TIMEOUT'); monitor.recordResult({result:'success',durationMs:9}); assert.strictEqual(monitor.snapshot().callsTotal,1); assert.strictEqual(monitor.snapshot().retries,2); });
+audit.setAuditSink(null);
+module.exports = { run: async () => passed === 6 ? 0 : 1 };
