@@ -1,0 +1,1 @@
+{"sampleVersion":"0.9","scenario":"rate-limited","request":{"rtaId":"synthetic-rta-006","timeRange":{"start":"2026-08-27T09:00:00Z","end":"2026-08-27T10:00:00Z"},"dataScope":"current_rta_only","requestId":null},"upstream":{"pages":[{"status":429,"delayMs":5,"body":{"code":"QUOTA"},"cursor":null}]},"expected":{"kind":"error","error":{"code":"RATE_LIMITED","retryable":true}}}

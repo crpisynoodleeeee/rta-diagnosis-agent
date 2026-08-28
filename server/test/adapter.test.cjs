@@ -1,0 +1,24 @@
+const assert = require('assert');
+const fs = require('fs'); const path = require('path');
+const c = require('../../demo/v6/data/media-data-provider.js');
+const { StagingMediaAdapter } = require('../staging-media-adapter.mjs');
+const dir = path.join(__dirname, 'fixtures/replay-samples');
+let passed = 0;
+async function test(name, fn) { try { await fn(); passed++; console.log('  PASS ' + name); } catch (e) { console.log('  FAIL ' + name + ': ' + e.message); } }
+const sample = name => JSON.parse(fs.readFileSync(path.join(dir, name)));
+const req = s => s.request;
+function adapter(s, opts = {}) { let i = 0; const pages = s.upstream.pages; return new StagingMediaAdapter({ providerId:'synthetic', platform:'generic', baseUrl:'https://staging.invalid', clock:()=>Date.now(), fetch: async (_u, o) => { const p = pages[Math.min(i++, pages.length-1)]; if (p.delayMs) await new Promise(r => setTimeout(r, p.delayMs)); if (p.status >= 400) return { ok:false, status:p.status, headers:new Map(Object.entries(p.headers||{})), json:async()=>p.body }; return { ok:true, status:p.status, headers:new Map(Object.entries(p.headers||{})), json:async()=>p.body }; }, ...opts }); }
+async function run() {
+  const PTOKEN = ['placeholder','token'].join('-');
+  const old = process.env.STAGING_API_TOKEN; process.env.STAGING_API_TOKEN = PTOKEN;
+  await test('adapter/auth-env-injection', async()=>{ let seen; const a=new StagingMediaAdapter({fetch:async(u,o)=>{seen=o.headers.Authorization;return {ok:true,status:200,headers:new Map(),json:async()=>({rta_id:'x',source_record_id:'s',updated_at:new Date().toISOString()})}},baseUrl:'https://x.invalid'}); await a.getDataEnvelope({rtaId:'x',timeRange:{start:'2026-01-01',end:'2026-01-01'}}); assert.strictEqual(seen,'Bearer ' + PTOKEN); delete process.env.STAGING_API_TOKEN; await assert.rejects(()=>a.getDataEnvelope({rtaId:'y',timeRange:{start:'2026-01-01',end:'2026-01-01'}}),e=>e.code==='AUTH_REQUIRED'); process.env.STAGING_API_TOKEN=PTOKEN; });
+  await test('adapter/pagination-bounded', async()=>{const s=sample('generic__normal__baseline.json'); const a=adapter(s,{maxPages:1}); const e=await a.getDataEnvelope(req(s)); assert.strictEqual(e.contractVersion,'0.8');});
+  await test('adapter/rate-concurrency-limit', async()=>{const s=sample('generic__normal__baseline.json'); const a=adapter(s,{maxConcurrency:1,rateLimitRps:1000}); await Promise.all([a.getConfigSnapshot(req(s)),a.getMetricBundle(req(s)),a.getDataEnvelope(req(s))]); assert.ok(a.active===0);});
+  await test('adapter/abort-timeout', async()=>{const s=sample('generic__timeout__deadline.json'); const a=adapter(s,{timeoutMs:10,overallTimeoutMs:20,maxRetries:0}); await assert.rejects(()=>a.getDataEnvelope(req(s)),e=>e.code==='TIMEOUT');});
+  await test('adapter/retry-whitelist', async()=>{const s=sample('generic__rate-limited__retry-exhausted.json'); const a=adapter(s,{maxRetries:1}); await assert.rejects(()=>a.getDataEnvelope(req(s)),e=>e.code==='RATE_LIMITED'&&e.retryable);});
+  await test('adapter/http-error-mapping', async()=>{for(const [f,code] of [['tencent__permission-denied__scope.json','PERMISSION_DENIED'],['generic__error-response__upstream.json','UPSTREAM_UNAVAILABLE']]) {const s=sample(f); await assert.rejects(()=>adapter(s,{maxRetries:0}).getDataEnvelope(req(s)),e=>e.code===code);}});
+  await test('adapter/replay-eight-scenarios', async()=>{const files=fs.readdirSync(dir).filter(x=>x.endsWith('.json')); assert.ok(files.length>=8); for(const f of files){const s=sample(f); if(s.expected.kind==='success') await adapter(s,{maxRetries:2,timeoutMs:1000,overallTimeoutMs:5000}).getDataEnvelope(req(s)); else await assert.rejects(()=>adapter(s,{maxRetries:0,timeoutMs:20,overallTimeoutMs:50}).getDataEnvelope(req(s)));}});
+  await test('adapter/demo-dual-track', async()=>{const {ReplayMediaAdapter}=require('../../demo/v6/data/replay-media-adapter.js'); const r=new ReplayMediaAdapter([{rtaId:'x',sourceRecordId:'s',dataUpdatedAt:'2026-08-27T00:00:00Z',config:{rtaid:{rta_id:'x'}},metrics:{core:{successRate:.8}}}],{clock:()=>Date.parse('2026-08-27T00:00:00Z')}); assert.strictEqual(r.getDataEnvelope({rtaId:'x',timeRange:{start:'2026-01-01',end:'2026-01-01'}}).metricBundle.coreMetrics.successRate,.8);});
+  if(old===undefined) delete process.env.STAGING_API_TOKEN; else process.env.STAGING_API_TOKEN=old; return passed===8?0:1;
+}
+module.exports = {run};

@@ -1,0 +1,21 @@
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const c = require('../../demo/v6/data/media-data-provider.js');
+const { ReplayMediaAdapter } = require('../../demo/v6/data/replay-media-adapter.js');
+const { MockMediaDataProvider } = require('../../demo/v6/data/mock-media-data-provider.js');
+const fixtureDir = path.join(__dirname, 'fixtures/replay-samples');
+const codes = new Set(Object.values(c.ERROR_CODES));
+let passed = 0;
+function test(name, fn) { try { fn(); passed++; console.log('  PASS ' + name); } catch (e) { console.log('  FAIL ' + name + ': ' + e.message); } }
+const request = { rtaId: 'contract-rta-001', timeRange: { start: '2026-08-27T00:00:00Z', end: '2026-08-27T01:00:00Z' }, dataScope: 'current_rta_only' };
+const record = { rtaId: request.rtaId, sourceRecordId: 'synthetic:001', dataUpdatedAt: '2026-08-27T00:00:00Z', config: { rtaid: { rta_id: request.rtaId }, strategies: [], groups: [] }, metrics: { core: { successRate: 0.8, timeoutRate: 0.02, avgLatency: 120 }, usage: { bidRate: 0.6 }, budget: { actual_cost: 12.5 } } };
+class P extends c.MediaDataProvider { constructor() { super({ providerId: 'contract-v08', platform: 'synthetic' }); } getConfigSnapshot(r) { c.validateProviderRequest(r); return { data: { rtaid: { rtaId: r.rtaId }, strategies: [], groups: [] }, meta: c.createProviderMeta({ providerId: this.providerId, platform: this.platform, sourceRecordId: 'synthetic:001', fetchedAt: '2026-08-27T01:00:00Z', dataUpdatedAt: '2026-08-27T00:00:00Z', freshnessSeconds: 0, qualityStatus: 'ok', missingFields: [] }) }; } getMetricBundle(r) { c.validateProviderRequest(r); return { data: { coreMetrics: { successRate: 0.8 }, usageMetrics: { bidRate: 0.6 }, budget: { actualCost: 12.5 }, durationMs: 120 }, meta: this.getConfigSnapshot(r).meta }; } }
+
+test('contract/three-methods', () => { const names = ['getConfigSnapshot', 'getMetricBundle', 'getDataEnvelope']; const p = new P(); names.forEach(n => assert.strictEqual(typeof p[n], 'function')); assert.strictEqual(p.capabilities.readOnly, true); const adapter = path.join(__dirname, '..', 'staging-media-adapter.mjs'); if (fs.existsSync(adapter)) assert.ok(fs.readFileSync(adapter, 'utf8')); });
+test('contract/current-rta-only', () => { assert.doesNotThrow(() => c.validateProviderRequest(request)); for (const bad of [{ ...request, dataScope: 'account' }, { ...request, rtaId: '' }, { ...request, timeRange: { start: '2026-08-28', end: '2026-08-27' } }]) assert.throws(() => c.validateProviderRequest(bad), e => e.code === c.ERROR_CODES.INVALID_REQUEST); });
+test('contract/envelope-v08', () => { const e = new ReplayMediaAdapter([record], { clock: () => Date.parse('2026-08-27T01:00:00Z') }).getDataEnvelope(request); assert.strictEqual(e.contractVersion, '0.8'); assert.strictEqual(e.meta.schemaVersion, '0.8'); ['providerId','platform','sourceRecordId','fetchedAt','dataUpdatedAt','qualityStatus'].forEach(k => assert.ok(e.meta[k])); assert.ok(Array.isArray(e.meta.missingFields)); assert.strictEqual(c.validateEnvelope(e).ok, true); });
+test('contract/normalized-fields', () => { const e = new ReplayMediaAdapter([record], { clock: () => Date.parse('2026-08-27T01:00:00Z') }).getDataEnvelope(request); assert.strictEqual(e.metricBundle.coreMetrics.successRate, 0.8); assert.strictEqual(e.metricBundle.usageMetrics.bidRate, 0.6); assert.strictEqual(e.metricBundle.budget.actualCost, 12.5); assert.strictEqual(e.metricBundle.coreMetrics.avgLatency, 120); });
+test('contract/no-write-capability', () => { const text = fs.readdirSync(path.join(__dirname, '..')).filter(x => /\.(cjs|mjs|js)$/.test(x)).map(x => fs.readFileSync(path.join(__dirname, '..', x), 'utf8')).join('\n'); ['setBudget','updateBid','writeConfig','deleteStrategy'].forEach(x => assert.ok(!new RegExp('(?:get|post|put|patch|delete).*' + x, 'i').test(text))); assert.strictEqual(new P().capabilities.readOnly, true); });
+test('contract/error-code-closed-set', () => { const files = fs.readdirSync(fixtureDir).filter(x => x.endsWith('.json')); assert.ok(files.length >= 8); for (const f of files) { const s = JSON.parse(fs.readFileSync(path.join(fixtureDir, f))); if (s.expected.kind === 'error') assert.ok(codes.has(s.expected.error.code), f); } });
+module.exports = { run: async () => passed === 6 ? 0 : 1 };

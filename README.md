@@ -2,9 +2,11 @@
 
 > 面向 RTA（实时竞价）投放优化的受控 Agentic Workflow：规则引擎确定性判定 → 场景识别 → AI 归因/解释/规划 → 人工确认执行。
 
-当前发布版本：`v0.7.0`（Queryable Mock Evidence Layer）
+当前发布版本：`v0.9.0`（Server-side Staging Read-only Prep）
 
-当前版本已加入 `v0.7` Mock 只读查询层，并在 V0.8 完成 Provider Envelope 驱动的只读工具接入：智能参谋可在当前 RTA、当前合成数据范围内查询指标、趋势、实验组/对照组、配置变更和证据引用。该能力仍完全基于 Mock/Replay 数据，不接真实媒体 API。
+V0.8.0 已正式发布。当前 Demo 通过 Provider Envelope 驱动只读工具，包含 MediaDataProvider 契约、MockMediaDataProvider、ReplayMediaAdapter（缓存、新鲜度和错误降级）以及只读工具白名单。智能参谋可在当前 RTA、当前合成 Mock/Replay 数据范围内查询指标、趋势、实验组/对照组、配置变更和证据引用；不接真实媒体 API。
+
+V0.9.0 已发布：服务端 Staging 只读接入准备——契约三件套（字段映射基线 / Adapter 设计+回放样本格式 / 安全·审计·监控设计）+ 服务端模块（staging adapter / security / audit / monitor）+ 回放样本与 5 组 32 项验收全绿。真实 Staging 联调待外部授权。见 [v0.9.0 发布说明](docs/releases/v0.9.0.md) 与三份契约：[字段映射基线](docs/architecture/v0.9-field-mapping-baseline.md)、[Adapter 设计](docs/architecture/v0.9-staging-adapter-design.md)、[安全审计监控设计](docs/architecture/v0.9-security-audit-design.md)。
 
 ## 在线 Demo
 
@@ -28,9 +30,9 @@
 | 场景识别 | S0-S7 卡点定位 + 预算未达标、CPA 过高、可安全放量标签 |
 | AI 层 | 原因排序、因果解释、实验方案、观察指标、成功标准和回滚条件 |
 | 人工控制 | 十状态工作流，AI 只生成草稿，不直接修改投放配置 |
-| 智能参谋 | 围绕当前 RTA 和当前诊断报告的受限追问、解释与 v0.7 Mock 查数 |
+| 智能参谋 | 围绕当前 RTA 和当前诊断报告的受限追问、解释与 V0.8 Provider/Mock/Replay 查数 |
 | Mock 查询层 | QueryContext + evidenceId，支持指标、趋势、组间、配置变更和证据查询 |
-| 工程验证 | Golden Case、场景、LLM 安全路径、智能参谋、v0.7 查询层和 v0.8 Provider 契约验收脚本 |
+| 工程验证 | Golden Case、场景、LLM 安全路径、智能参谋、v0.7 查询层和 V0.8 Provider 专项验收脚本 |
 
 ## 架构边界
 
@@ -56,8 +58,13 @@ AI/模板诊断输出
 
 | 文档 | 用途 |
 | --- | --- |
-| [v0.7.0 发布说明](docs/releases/v0.7.0.md) | 当前版本、Mock 查询层、证据编号和专项验收 |
+| [v0.9.0 发布说明](docs/releases/v0.9.0.md) | 当前发布版本、服务端 Staging 只读接入准备、32 项专项验收 |
+| [v0.8.0 发布说明](docs/releases/v0.8.0.md) | 历史版本、Provider/Replay 只读边界和专项验收 |
+| [v0.7.0 发布说明](docs/releases/v0.7.0.md) | 历史版本、Mock 查询层、证据编号和专项验收 |
 | [V0.8 Provider 契约](docs/architecture/v0.8-provider-contract.md) | 统一数据 Provider、Mock 抽离、回放 Adapter、Adapter 边界和分批迁移方案 |
+| [V0.9 字段映射基线](docs/architecture/v0.9-field-mapping-baseline.md) | V0.9 契约：Staging 规范化字段与待外部核验项 |
+| [V0.9 Staging 只读 Adapter 设计](docs/architecture/v0.9-staging-adapter-design.md) | V0.9 契约：服务端只读 Adapter 组件边界、回放样本格式和授权前提 |
+| [V0.9 安全、审计与监控设计](docs/architecture/v0.9-security-audit-design.md) | V0.9 契约：凭证、脱敏、审计、监控 schema 和 P2 验收标准 |
 | [v0.6.0 发布说明](docs/releases/v0.6.0.md) | 历史版本、验证范围和已知限制 |
 | [PRD v0.2.1](PRD%20v0.2.1.md) | 产品范围、页面、状态机和验收标准 |
 | [Agent 输入输出结构契约 v0.3](Agent输入输出结构契约%20v0.3.md) | 输入、输出和字段契约 |
@@ -82,9 +89,11 @@ node _verify_v07.cjs
 node _verify_v08_provider.cjs
 ```
 
-五组 V0.7 脚本覆盖 Golden Case、5 类扩展场景、10 条 LLM 路径、47 条智能参谋用例和 30 条 v0.7 查询层用例；V0.8 Provider 脚本覆盖契约、Mock 抽离、回放标准化、缓存、新鲜度、只读工具白名单和错误降级（34/34）。测试使用 Mock 数据和 Stub，不代表真实媒体接口联调或业务收益。
+六组验收脚本覆盖 Golden Case（7/7）、5 类扩展场景（5/5）、LLM 路径（10/10）、智能参谋（47/47）、v0.7 查询层（30/30）和 V0.8 Provider 专项（34/34）。测试使用 Mock 数据和 Stub，不代表真实媒体接口联调或业务收益。
 
-V0.8.0 已合并到 `main` 并准备发布；真实 Staging API 只读联调、生产凭证、监控和租户治理属于 V0.9。
+V0.9 验收脚本 `server/_verify_v09.cjs`：5 组 32/32 通过（contract 6 / adapter 8 / security 6 / audit 6 / llm-tools 6），全部离线基于合成 Mock/Replay 数据。
+
+V0.9.0 已合并到 `main`、打标签并发布（服务端 Staging 只读接入准备：契约、服务端模块、回放样本与 32 项验收）；真实 Staging API 只读联调待 API 文档、字段核验、测试凭证/权限与明确授权后开展。
 
 ## 部署
 
