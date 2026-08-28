@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.9.0 - In development (unreleased)
+
+### Added
+
+- 服务端只读 Staging 接入准备（契约三件套）：字段映射基线、Staging 只读 Adapter 设计（含回放样本格式）、安全-审计-监控设计。
+- 回放样本与验证聚合器骨架。
+- 服务端 staging adapter / security / audit / monitor 模块（实现中）。
+- `server/_verify_v09.cjs` 验收脚本按 5 组（contract / adapter / security / audit / llm-tools）执行中。
+
+### Boundaries
+
+- 真实 Staging 联调须等待 API 文档、字段核验、脱敏样本、测试凭证/权限和明确的 Staging 授权。
+- 不接生产 API、生产凭证和真实公司数据；不引入任何预算、出价、策略等写接口。
+
 ## v0.8.0 - 2026-08-27
 
 ### Added
