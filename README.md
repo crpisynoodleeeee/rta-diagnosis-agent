@@ -2,11 +2,11 @@
 
 > 面向 RTA（实时竞价）投放优化的受控 Agentic Workflow：规则引擎确定性判定 → 场景识别 → AI 归因/解释/规划 → 人工确认执行。
 
-当前发布版本：`v0.8.0`（Provider-backed Read-only Demo）
+当前发布版本：`v0.9.0`（Server-side Staging Read-only Prep）
 
 V0.8.0 已正式发布。当前 Demo 通过 Provider Envelope 驱动只读工具，包含 MediaDataProvider 契约、MockMediaDataProvider、ReplayMediaAdapter（缓存、新鲜度和错误降级）以及只读工具白名单。智能参谋可在当前 RTA、当前合成 Mock/Replay 数据范围内查询指标、趋势、实验组/对照组、配置变更和证据引用；不接真实媒体 API。
 
-V0.9（服务端只读 Staging 接入准备）开发中（未发布），见 [docs/architecture/v0.9-field-mapping-baseline.md](docs/architecture/v0.9-field-mapping-baseline.md)、[v0.9-staging-adapter-design.md](docs/architecture/v0.9-staging-adapter-design.md)、[v0.9-security-audit-design.md](docs/architecture/v0.9-security-audit-design.md) 三份契约。
+V0.9.0 已发布：服务端 Staging 只读接入准备——契约三件套（字段映射基线 / Adapter 设计+回放样本格式 / 安全·审计·监控设计）+ 服务端模块（staging adapter / security / audit / monitor）+ 回放样本与 5 组 32 项验收全绿。真实 Staging 联调待外部授权。见 [v0.9.0 发布说明](docs/releases/v0.9.0.md) 与三份契约：[字段映射基线](docs/architecture/v0.9-field-mapping-baseline.md)、[Adapter 设计](docs/architecture/v0.9-staging-adapter-design.md)、[安全审计监控设计](docs/architecture/v0.9-security-audit-design.md)。
 
 ## 在线 Demo
 
@@ -58,7 +58,8 @@ AI/模板诊断输出
 
 | 文档 | 用途 |
 | --- | --- |
-| [v0.8.0 发布说明](docs/releases/v0.8.0.md) | 当前发布版本、Provider/Replay 只读边界和专项验收 |
+| [v0.9.0 发布说明](docs/releases/v0.9.0.md) | 当前发布版本、服务端 Staging 只读接入准备、32 项专项验收 |
+| [v0.8.0 发布说明](docs/releases/v0.8.0.md) | 历史版本、Provider/Replay 只读边界和专项验收 |
 | [v0.7.0 发布说明](docs/releases/v0.7.0.md) | 历史版本、Mock 查询层、证据编号和专项验收 |
 | [V0.8 Provider 契约](docs/architecture/v0.8-provider-contract.md) | 统一数据 Provider、Mock 抽离、回放 Adapter、Adapter 边界和分批迁移方案 |
 | [V0.9 字段映射基线](docs/architecture/v0.9-field-mapping-baseline.md) | V0.9 契约：Staging 规范化字段与待外部核验项 |
@@ -90,9 +91,9 @@ node _verify_v08_provider.cjs
 
 六组验收脚本覆盖 Golden Case（7/7）、5 类扩展场景（5/5）、LLM 路径（10/10）、智能参谋（47/47）、v0.7 查询层（30/30）和 V0.8 Provider 专项（34/34）。测试使用 Mock 数据和 Stub，不代表真实媒体接口联调或业务收益。
 
-V0.9 验收脚本为 `server/_verify_v09.cjs`（开发中），按 contract / adapter / security / audit / llm-tools 五组执行中，结果待验收；V0.9 尚未发布。
+V0.9 验收脚本 `server/_verify_v09.cjs`：5 组 32/32 通过（contract 6 / adapter 8 / security 6 / audit 6 / llm-tools 6），全部离线基于合成 Mock/Replay 数据。
 
-V0.8.0 已合并到 `main`、打标签并发布；真实 Staging API 只读联调、服务端凭证与最小权限、Token 轮换、脱敏日志、调用审计、真实 LLM 工具调用验证、监控和租户治理属于 V0.9。
+V0.9.0 已合并到 `main`、打标签并发布（服务端 Staging 只读接入准备：契约、服务端模块、回放样本与 32 项验收）；真实 Staging API 只读联调待 API 文档、字段核验、测试凭证/权限与明确授权后开展。
 
 ## 部署
 
