@@ -5,7 +5,8 @@ const groups = [
   ['contract', './test/contract.test.cjs'],
   ['adapter', './test/adapter.test.cjs'],
   ['security', './test/security.test.cjs'],
-  ['audit', './test/audit.test.cjs']
+  ['audit', './test/audit.test.cjs'],
+  ['llm-tools', './test/llm-tools.test.cjs'],
 ];
 let failed = 0;
 (async () => {
