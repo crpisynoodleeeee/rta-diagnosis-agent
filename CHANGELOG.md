@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.9.1 - 2026-08-29
+
+### Added
+
+- 基于巨量开放平台公开接口文档完成字段契约核验（28 份文档、72 项待核验：20 已核验 / 27 部分核验 / 19 未找到公开依据 / 6 需真实响应）。
+- Staging Adapter 对齐巨量公开契约：RTA 字段（`rta_id` / `interface_info.status` / `delivery_range` / `local_qps` / `union_qps` / `vid` / `cus_vid` / `strategy` 分桶）、指标字段（`request_count` / `bid_count` / `convert` / `cost` / `bid_coef`）与 15 个业务码到 5 类 `ProviderError` 的映射。
+- adapter 验收组新增 6 项巨量契约对齐用例（8 → 14）。
+
+### Boundaries
+
+- 零凭证：仅核验公开文档，未调用媒体业务接口、未使用真实凭证、未发真实请求。
+- 真实凭证验证待企业授权；6 项字段需真实响应确认（不阻塞封版）。
+- 不引入写接口；只读边界与离线 Mock/Replay 口径保持不变。
+
 ## v0.9.0 - 2026-08-28
 
 ### Added
