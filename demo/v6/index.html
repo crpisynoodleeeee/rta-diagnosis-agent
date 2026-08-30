@@ -39,7 +39,8 @@
     }
   </script>
   <style>
-    body { background:#f6f8fa; color:#1f2329; -webkit-font-smoothing:antialiased; }
+    :root { color-scheme: light; }
+    body { background:#f3f6f9; color:#1f2329; -webkit-font-smoothing:antialiased; }
     .num { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; }
     ::-webkit-scrollbar { width:8px; height:8px; }
     ::-webkit-scrollbar-thumb { background:rgba(139,150,162,.35); border-radius:4px; }
@@ -53,14 +54,32 @@
     .btn-tactile { transition: transform .12s ease, background-color .15s ease, border-color .15s ease, color .15s ease; }
     .btn-tactile:active:not(:disabled) { transform: scale(0.98); }
     button { transition: transform .12s ease, background-color .15s ease, border-color .15s ease, color .15s ease; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid rgba(43,95,242,.28); outline-offset:2px; }
     @media (prefers-reduced-motion: reduce) {
       .spin, .slidein, .fadein { animation: none !important; }
       button { transition: none !important; }
     }
-    .tip-bar { background: linear-gradient(90deg, #eef4ff 0%, #dde9ff 100%); border:1px solid #b8d2ff; }
-    .row-abnormal { background:#fef2f2; }
-    .row-abnormal:hover { background:#fee2e2; }
+    .app-header { height:44px; border-top:2px solid #2b5ff2; box-shadow:0 1px 0 rgba(16,22,28,.03); }
+    .side-nav { position:sticky; top:44px; height:calc(100vh - 44px); min-height:0; }
+    .main-workspace { background:#f3f6f9; }
+    .page-heading { min-height:58px; }
+    .tip-bar { background:#edf4ff; border:1px solid #c9dcff; box-shadow:inset 3px 0 0 #5289ff; }
+    .panel-surface { border:1px solid #e3e8ee; box-shadow:0 1px 2px rgba(16,22,28,.04), 0 8px 24px rgba(31,35,41,.025); }
+    .qps-card { position:relative; overflow:hidden; border:1px solid #e3e8ee; box-shadow:0 1px 2px rgba(16,22,28,.04), 0 8px 20px rgba(31,35,41,.025); }
+    .qps-card::before { content:''; position:absolute; left:0; right:0; top:0; height:3px; background:#85b1ff; }
+    .qps-card--used::before { background:#f59e0b; }
+    .qps-card--remaining::before { background:#34d399; }
+    .filter-panel { border:1px solid #e3e8ee; box-shadow:0 1px 2px rgba(16,22,28,.035); }
+    .filter-panel input, .filter-panel select { min-height:30px; background:#fff; }
+    .table-shell { border:1px solid #e3e8ee; box-shadow:0 1px 2px rgba(16,22,28,.04), 0 10px 28px rgba(31,35,41,.025); }
     table.compact th, table.compact td { white-space: nowrap; }
+    table.compact thead th { position:sticky; top:0; z-index:1; background:#f7f9fb; border-bottom:1px solid #dfe5eb; letter-spacing:0; }
+    table.compact tbody tr { border-top:1px solid #edf0f3; transition:background-color .15s ease; }
+    table.compact tbody tr:first-child { border-top:0; }
+    .row-abnormal { background:#fffafa; }
+    .row-abnormal:hover { background:#fff3f4; }
+    .row-abnormal td:first-child { box-shadow:inset 3px 0 0 #fb7185; }
+    .boundary-note { border-top:1px solid #dde3e9; padding-top:12px; }
     .drawer-mask { background: rgba(16,22,28,.38); }
     .badge { display:inline-flex; align-items:center; gap:4px; padding:1px 8px; border-radius:9999px; font-size:12px; line-height:18px; font-weight:500; }
     .badge-dot { width:6px; height:6px; border-radius:9999px; display:inline-block; }
@@ -131,7 +150,7 @@ const READONLY_TOOL_API = typeof RTAReadOnlyTools !== 'undefined' ? RTAReadOnlyT
  *     - 代理未启动 / Key 未设置 → 返回 HTTP 503 + { error: 'LLM_NOT_CONFIGURED' }，
  *       前端 catch 后静默回退模板，UI 不崩。
  *     - 默认 enabled=false：演示走 buildTemplateNarrative（稳定 + 完全离线）。
- *     - 勾选 UI「AI 模式」→ 异步 fire-and-forget 调本地代理；失败一律回退模板。
+ *     - LLM_CONFIG.enabled=true → 异步 fire-and-forget 调本地代理；失败一律回退模板。
  *     - 真实接入由运维 `export DEEPSEEK_API_KEY=<key>` 后启动 llm-proxy.mjs；
  *       前端代码 commit 时不应出现任何真实 Key。
  * ═══════════════════════════════════════════════════════════════════════ */
@@ -2996,15 +3015,6 @@ const app = createApp({
     const showTechnical = ref(false);
     const showTerminology = ref(false);
 
-    // 演示开关：强制某条记录走「数据不足」路径
-    const demoInsufficient = ref(false);
-
-    // 演示开关：AI 模式 · DeepSeek（勾选后会把 LLM_CONFIG.enabled 同步切换）
-    // 🔒 前端从未持有 apiKey。勾选后仅代表"愿意请求本地代理 llm-proxy.mjs"；
-    //    代理未启动 / Key 未设置（代理返回 503 LLM_NOT_CONFIGURED）→ 静默回退模板，UI 不崩。
-    const demoLLM = ref(false);
-    watch(demoLLM, v => { LLM_CONFIG.enabled = v; });
-
     function resetDrawer() {
       drawerOpen.value = false;
       drawerState.value = STATES.IDLE.key;
@@ -3030,7 +3040,7 @@ const app = createApp({
         // 诊断 1.8s
         setTimeout(() => {
           try {
-            if (forceInsufficient || demoInsufficient.value) {
+            if (forceInsufficient) {
               // 构造一个数据不足的报告
               drawerReport.value = {
                 status: 'insufficient',
@@ -3143,7 +3153,7 @@ const app = createApp({
       tagList: ['全部标签', '预算未达标', 'CPA 过高', '可安全放量', '配置故障', '入口流量异常', '命中率下降', '参竞率下降', '出价异常', '执行异常', '回传异常', '—'],
       // 抽屉
       drawerOpen, drawerState, drawerStateObj, drawerTarget, drawerReport, drawerError,
-      drawerMeta, autoProgress, showTechnical, showTerminology, demoInsufficient, demoLLM,
+      drawerMeta, autoProgress, showTechnical, showTerminology,
       LLM_CONFIG,
       TERMINOLOGY,
       openDiagnosis, closeDrawer, approvePlan, modifyPlan, rejectPlan, markExecuted, markReviewed, restartDiagnosis
@@ -3154,7 +3164,7 @@ const app = createApp({
 <div class="min-h-screen bg-ink-50">
 
   <!-- 顶部：仅保留产品名称与 Demo 标识，不放任何业务导航（业务导航全部移至左侧侧边栏） -->
-  <header class="bg-white border-b border-ink-200 h-10 flex items-center px-5 sticky top-0 z-30">
+  <header class="app-header bg-white border-b border-ink-200 flex items-center px-5 sticky top-0 z-30">
     <div class="font-semibold text-ink-800 text-[14px] tracking-wide">GROWTHPLATFORM</div>
     <div class="ml-3 text-[12px] text-ink-500">· RTA 投放诊断 Agent</div>
     <div class="ml-auto flex items-center gap-2 text-[12px] text-ink-400">
@@ -3165,32 +3175,27 @@ const app = createApp({
 
   <div class="flex">
     <!-- 左侧业务导航（侧边栏）：本 Demo 唯一的业务导航 -->
-    <aside class="w-56 bg-white border-r border-ink-200 min-h-[calc(100vh-40px)] py-3 overflow-y-auto" style="font-size:13px;">
+    <aside class="side-nav w-56 bg-white border-r border-ink-200 py-3 overflow-y-auto" style="font-size:13px;">
       <NavMenuItem v-for="g in navGroups" :key="g.id" :group="g" :depth="0" :selected-menu-id="selectedMenuId" @select="onMenuSelect" />
     </aside>
 
     <!-- 主区 -->
-    <main class="flex-1 min-w-0 p-5">
+    <main class="main-workspace flex-1 min-w-0 p-5">
 
       <template v-if="currentView === 'list'">
 
       <!-- 标题区 -->
-      <div class="flex items-end justify-between mb-3">
+      <div class="page-heading flex items-end justify-between mb-3">
         <div>
           <div class="text-[12px] text-ink-400">RTA / RTAID 配置</div>
           <h1 class="text-[20px] font-semibold text-ink-800 mt-0.5">RTAID 配置列表</h1>
           <p class="text-[12px] text-ink-500 mt-1">诊断入口为列表行级「发起诊断」按钮 · 数据为模拟数据</p>
         </div>
         <div class="flex items-center gap-2">
-          <label class="flex items-center gap-1.5 text-[12px] text-ink-500 cursor-pointer">
-            <input type="checkbox" v-model="demoInsufficient" class="rounded" />
-            演示数据不足模式
-          </label>
-          <label class="flex items-center gap-1.5 text-[12px] text-ink-500 cursor-pointer" title="勾选后请求本地代理 llm-proxy.mjs（Key 仅存在于代理进程的 DEEPSEEK_API_KEY 环境变量）；代理未启动/未配置 Key → 自动回退模板，不阻塞页面">
-            <input type="checkbox" v-model="demoLLM" class="rounded" />
-            AI 模式 · DeepSeek
-          </label>
-          <button class="bg-white border border-ink-200 text-ink-700 px-3 py-1.5 rounded text-[13px] btn-tactile hover:bg-ink-50">系统配置</button>
+          <button @click="openDiagnosis(rtaList[0].rtaId, true)" title="打开数据不足状态示例" class="bg-white border border-amber-200 text-amber-700 px-3 py-1.5 rounded text-[13px] btn-tactile hover:bg-amber-50 font-medium">
+            <span class="inline-flex items-center justify-center w-4 h-4 mr-1 rounded-full bg-amber-100 text-[11px]">!</span>预览数据不足
+          </button>
+          <button disabled title="系统配置将在后续版本开放" class="bg-ink-50 border border-ink-200 text-ink-400 px-3 py-1.5 rounded text-[13px] cursor-not-allowed">系统配置（未开放）</button>
         </div>
       </div>
 
@@ -3208,17 +3213,17 @@ const app = createApp({
 
       <!-- 3 张 QPS 概览卡 -->
       <div class="grid grid-cols-3 gap-3 mb-4">
-        <div class="bg-white rounded-md p-4 shadow-panel">
+        <div class="qps-card bg-white rounded-md p-4">
           <div class="text-[12px] text-ink-500">总配置 QPS</div>
           <div class="num text-[24px] font-semibold text-ink-800 mt-1">{{ qpsSummary.config.toLocaleString() }}</div>
           <div class="text-[11px] text-ink-400 mt-1">10 个 RTAID 累计</div>
         </div>
-        <div class="bg-white rounded-md p-4 shadow-panel">
+        <div class="qps-card qps-card--used bg-white rounded-md p-4">
           <div class="text-[12px] text-ink-500">总实验已占用 QPS</div>
           <div class="num text-[24px] font-semibold text-ink-800 mt-1">{{ qpsSummary.used.toLocaleString() }}</div>
           <div class="text-[11px] text-ink-400 mt-1">实时聚合</div>
         </div>
-        <div class="bg-white rounded-md p-4 shadow-panel">
+        <div class="qps-card qps-card--remaining bg-white rounded-md p-4">
           <div class="text-[12px] text-ink-500">总剩余 QPS</div>
           <div class="num text-[24px] font-semibold text-ink-800 mt-1">{{ qpsSummary.remaining.toLocaleString() }}</div>
           <div class="progress-track mt-2"><div class="progress-bar bg-brand-500" :style="{ width: ((qpsSummary.remaining/qpsSummary.config)*100).toFixed(1)+'%' }"></div></div>
@@ -3226,7 +3231,7 @@ const app = createApp({
       </div>
 
       <!-- 筛选区 -->
-      <div class="bg-white rounded-md p-3 mb-3 shadow-panel flex items-center gap-3 flex-wrap">
+      <div class="filter-panel bg-white rounded-md p-3 mb-3 flex items-center gap-3 flex-wrap">
         <div class="flex items-center gap-1.5">
           <span class="text-[12px] text-ink-500">RTAID / 项目：</span>
           <input v-model="searchKw" placeholder="搜索 RTAID 或项目名" class="border border-ink-200 rounded px-2 py-1 text-[13px] w-56 focus:outline-none focus:border-brand-500" />
@@ -3253,7 +3258,7 @@ const app = createApp({
       </div>
 
       <!-- 列表 -->
-      <div class="bg-white rounded-md shadow-panel overflow-x-auto">
+      <div class="table-shell bg-white rounded-md overflow-x-auto">
         <table class="compact text-[12.5px] w-full">
           <thead class="bg-ink-50 text-ink-600">
             <tr>
@@ -3319,7 +3324,7 @@ const app = createApp({
       </div>
 
       <!-- 底部 Agent 边界声明 -->
-      <div class="mt-4 text-[11.5px] text-ink-400 leading-relaxed">
+      <div class="boundary-note mt-4 text-[11.5px] text-ink-400 leading-relaxed">
         <div>ⓘ <span class="font-medium text-ink-600">Agent 边界</span>：AI 只诊断与生成实验草稿，不直接修改真实预算、出价或策略。所有配置变更需人工审批后执行。</div>
         <div class="mt-1">本 Demo 使用模拟数据展示 RTA 诊断 Agent 的产品形态与判定流程；不接入真实媒体 API。规则阈值与字段标注【待核验】。</div>
       </div>
@@ -3341,7 +3346,7 @@ const app = createApp({
           <div class="text-[11.5px] text-ink-500 mt-1">当前为 Demo 工作台骨架，默认离线展示；不直接修改投放配置。</div>
         </div>
 
-        <section class="bg-white border border-ink-200 rounded shadow-panel p-4 mb-4">
+        <section class="panel-surface bg-white rounded-md p-4 mb-4">
           <div class="flex items-center justify-between mb-3">
             <div class="text-[13px] font-semibold text-ink-800">当前诊断上下文</div>
             <span class="badge bg-ink-100 text-ink-600">模拟数据</span>
@@ -3353,18 +3358,18 @@ const app = createApp({
               </select>
             </label>
             <div><div class="text-ink-400">媒体</div><div class="mt-1 text-ink-800">{{ assistantRta.media }}</div></div>
-            <div><div class="text-ink-400">当前实验</div><div class="mt-1 text-ink-800">{{ assistantRta.experiment && assistantRta.experiment.name || '当前实验' }}</div></div>
+            <div><div class="text-ink-400">当前实验</div><div class="mt-1 text-ink-800">{{ assistantRta.experiment && assistantRta.experiment.name || '未关联实验' }}</div></div>
             <div><div class="text-ink-400">诊断时间范围</div><div class="mt-1 text-ink-800 num">2026-08-14 当日</div></div>
           </div>
           <div class="grid grid-cols-3 gap-3 mt-3 text-[12px]">
             <div><span class="text-ink-400">项目：</span><span class="text-ink-800">{{ assistantRta.projectName }}</span></div>
-            <div><span class="text-ink-400">策略：</span><span class="text-ink-800">{{ assistantRta.strategies && assistantRta.strategies[0] && assistantRta.strategies[0].name || '当前策略' }}</span></div>
+            <div><span class="text-ink-400">策略：</span><span class="text-ink-800">{{ assistantRta.strategies && assistantRta.strategies[0] && assistantRta.strategies[0].name || '未选择策略' }}</span></div>
             <div><span class="text-ink-400">当前状态：</span><span class="text-ink-800">{{ assistantRta.status }}</span></div>
           </div>
         </section>
 
         <div class="grid grid-cols-5 gap-4">
-          <section class="col-span-3 bg-white border border-ink-200 rounded shadow-panel p-4">
+          <section class="panel-surface col-span-3 bg-white rounded-md p-4">
             <div class="flex items-center justify-between mb-3">
               <div class="text-[13px] font-semibold text-ink-800">对话区</div>
               <span class="text-[11.5px] text-ink-400">智能参谋 · Demo · 上下文仅当前 RTA</span>
@@ -3412,7 +3417,7 @@ const app = createApp({
             <div class="text-[10.5px] text-ink-400 mt-1.5">提示：推荐问题点击直接发送；切换 RTA 后系统将自动重置对话上下文。</div>
           </section>
 
-          <section class="col-span-2 bg-white border border-ink-200 rounded shadow-panel p-4">
+          <section class="panel-surface col-span-2 bg-white rounded-md p-4">
             <div class="text-[13px] font-semibold text-ink-800 mb-3">推荐问题</div>
             <div class="space-y-2">
               <button v-for="q in assistantQuestions" :key="q" @click="askRecommended(q)" :disabled="isAsking" class="w-full text-left border border-ink-200 rounded px-3 py-2 text-[12px] text-ink-700 hover:border-brand-300 hover:bg-brand-50 disabled:opacity-50 disabled:cursor-not-allowed btn-tactile">{{ q }}</button>
