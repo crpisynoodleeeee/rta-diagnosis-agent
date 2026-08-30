@@ -131,6 +131,7 @@
 <script src="./data/media-data-provider.js"></script>
 <script src="./data/mock-media-data-provider.js"></script>
 <script src="./data/readonly-query-tools.js"></script>
+<script src="./data/diagnosis-task-model.js"></script>
 
 <!-- 主应用（普通 script + const { createApp, ... } = Vue 解构） -->
 <script>
@@ -2763,20 +2764,9 @@ const app = createApp({
         id: 'delivery', label: '投放管理', hasChildren: true, open: true, children: [
           {
             id: 'rta', label: 'RTA', hasChildren: true, open: true, children: [
-              { id: 'rtaid',      label: 'RTAID 配置',     hasChildren: false },
-              { id: 'strategy',   label: '策略工厂',       hasChildren: false },
-              { id: 'experiment', label: 'RTA 实验',       hasChildren: false },
+              { id: 'tasks',      label: '诊断工作台',     hasChildren: false },
+              { id: 'rtaid',      label: 'RTA 配置',       hasChildren: false },
               { id: 'assistant',  label: '智能参谋',       hasChildren: false },
-              {
-                id: 'rta-dc', label: '数据中心', hasChildren: true, open: true, children: [
-                  { id: 'rta-report', label: 'RTA 报表',     hasChildren: false },
-                  { id: 'rta-log',    label: 'RTA 执行日志', hasChildren: false }
-                ]
-              },
-              { id: 'rta-base',    label: '基础配置', hasChildren: false },
-              { id: 'rta-attr',    label: '归因配置', hasChildren: false },
-              { id: 'rta-cb',      label: '回传配置', hasChildren: false },
-              { id: 'rta-monitor', label: '监测链接', hasChildren: false }
             ]
           },
           { id: 'event',   label: '事件中心',       hasChildren: false },
@@ -2802,8 +2792,44 @@ const app = createApp({
     // - 默认 LLM_CONFIG.enabled = false → 走模板兜底，离线可跑
     // - LLM 开启时 → 复用现有 callLLM 通道，但走独立 prompt + 校验，失败一律回退模板
     // - 切换 RTA 时 clear() 上一 RTA 会话与诊断引用，只维护当前 RTA 的活动会话
-    const currentView = ref('list');
-    const selectedMenuId = ref('rtaid');
+    const currentView = ref('tasks');
+    const selectedMenuId = ref('tasks');
+    const selectedTaskId = ref(null);
+    const p5Tasks = computed(() => DiagnosisTaskModel.buildTasks());
+    const selectedTask = computed(() => p5Tasks.value.find(t => t.id === selectedTaskId.value) || null);
+    const p5Filter = ref('待关注');
+    const p5FilterOptions = ['待关注', '全部任务', '数据不足', '已查看'];
+    const p5Counts = computed(() => ({ attention: p5Tasks.value.filter(t => t.status === 'attention').length, high: p5Tasks.value.filter(t => t.priority === 'high').length, insufficient: p5Tasks.value.filter(t => t.status === 'insufficient').length, viewed: p5Tasks.value.filter(t => t.status === 'viewed').length }));
+    const p5VisibleTasks = computed(() => { const f = p5Tasks.value.filter(t => p5Filter.value === '全部任务' || (p5Filter.value === '待关注' && t.status === 'attention') || (p5Filter.value === '数据不足' && t.status === 'insufficient') || (p5Filter.value === '已查看' && t.status === 'viewed')); const rank = t => t.status === 'viewed' ? 4 : t.status === 'insufficient' || t.status === 'stale' ? 2 : t.priority === 'high' ? 0 : t.priority === 'medium' ? 1 : 3; return f.slice().sort((a,b) => rank(a)-rank(b) || a.id.localeCompare(b.id)); });
+    function onSelectTask(task) { selectedTaskId.value = task.id; currentView.value = 'taskDetail'; selectedMenuId.value = 'tasks'; }
+    function goBackToTasks() { currentView.value = 'tasks'; selectedMenuId.value = 'tasks'; selectedTaskId.value = null; }
+    const taskChatSessions = reactive(new Map());
+    const taskAssistantInput = ref('');
+    const taskAssistantListEl = ref(null);
+    const taskIsAsking = ref(false);
+    function getOrCreateTaskSession(task) {
+      if (!task) return { messages: [] };
+      if (!taskChatSessions.has(task.id)) taskChatSessions.set(task.id, { taskId: task.id, messages: [{ role: 'assistant', text: '我会围绕当前任务的诊断证据与数据质量回答。', ts: nowStr() }] });
+      return taskChatSessions.get(task.id);
+    }
+    const currentTaskSession = computed(() => getOrCreateTaskSession(selectedTask.value));
+    function taskQuestionBlocked(q, task) {
+      const blocked = (task && task.assistantContext && task.assistantContext.blockedTopics) || [];
+      if (blocked.some(topic => q.includes(topic))) return '当前任务上下文不支持该操作类问题，请聚焦诊断与证据。';
+      if (task && task.status === 'insufficient' && !/(数据质量|缺失字段|更新时间|诊断限制|证据不足)/.test(q)) return '当前任务证据不足，请聚焦数据质量、缺失字段、更新时间或诊断限制；请先查看缺失字段。';
+      return '';
+    }
+    async function askTaskAssistant(question) {
+      const q = (question || '').trim(), task = selectedTask.value;
+      if (!q || !task || taskIsAsking.value) return;
+      taskIsAsking.value = true;
+      const sess = getOrCreateTaskSession(task); sess.messages.push({ role: 'user', text: q, ts: nowStr() }); taskAssistantInput.value = '';
+      const blocked = taskQuestionBlocked(q, task);
+      if (blocked) sess.messages.push({ role: 'assistant', text: blocked, ts: nowStr() });
+      else if (task.status === 'insufficient') sess.messages.push({ role: 'assistant', text: '当前任务不生成根因结论或处置草稿。可确认的范围是：缺少字段为 ' + (task.dataQuality.missingFields || []).join('、') + '；受影响判断为 ' + (task.dataQuality.affectedJudgments || []).join('、') + '。', ts: nowStr() });
+      else sess.messages.push({ role: 'assistant', text: '当前判断为“疑似/待确认”：' + (task.diagnosis.conclusion || '暂无结论') + '。依据证据 ' + (task.diagnosis.evidenceIds || []).join('、') + '，数据质量为 ' + task.dataQuality.status + '。', ts: nowStr() });
+      taskIsAsking.value = false; await nextTick(); if (taskAssistantListEl.value) taskAssistantListEl.value.scrollTop = taskAssistantListEl.value.scrollHeight;
+    }
     const assistantRtaId = ref(listDataRecords()[0].rtaId);
     const assistantInput = ref('');
     const assistantListEl = ref(null);
@@ -2974,6 +3000,8 @@ const app = createApp({
       selectedMenuId.value = group.id;
       if (group.id === 'rtaid') {
         currentView.value = 'list';
+      } else if (group.id === 'tasks') {
+        currentView.value = 'tasks';
       } else if (group.id === 'assistant') {
         currentView.value = 'staff';
       }
@@ -3138,7 +3166,9 @@ const app = createApp({
 
     return {
       // 侧边栏菜单
-      navGroups, selectedMenuId, currentView,
+      navGroups, selectedMenuId, currentView, selectedTaskId,
+      p5Tasks, p5Filter, p5FilterOptions, p5Counts, p5VisibleTasks, onSelectTask, selectedTask, goBackToTasks, DiagnosisTaskModel,
+      taskAssistantInput, taskAssistantListEl, taskIsAsking, currentTaskSession, askTaskAssistant,
       onMenuSelect, goBackToList,
       // 智能参谋工作台（第三步 · 有限上下文连续问答）
       assistantRtaId, assistantRta, assistantInput, assistantListEl,
@@ -3182,7 +3212,26 @@ const app = createApp({
     <!-- 主区 -->
     <main class="main-workspace flex-1 min-w-0 p-5">
 
-      <template v-if="currentView === 'list'">
+      <template v-if="currentView === 'tasks'">
+      <div class="page-heading mb-4"><div class="text-[12px] text-ink-400">诊断工作台</div><h1 class="text-[20px] font-semibold text-ink-800 mt-0.5">诊断工作台 · 任务队列</h1><p class="text-[12px] text-ink-500 mt-1">数据为合成 Mock 数据</p></div>
+      <div class="grid grid-cols-6 gap-3 mb-4"><div v-for="item in [{key:'attention',label:'待关注'},{key:'high',label:'高优先级'},{key:'insufficient',label:'数据不足'},{key:'viewed',label:'已查看'}]" :key="item.key" class="bg-white rounded-md p-3 border border-ink-100"><div class="text-[12px] text-ink-500">{{ item.label }}</div><div class="num text-[24px] font-semibold mt-1 text-red-600">{{ p5Counts[item.key] }}</div></div><div v-for="label in ['待审批','观察中']" :key="label" class="bg-ink-50 rounded-md p-3 border border-ink-200 opacity-70"><div class="text-[12px] text-ink-400">{{ label }}</div><div class="num text-[24px] text-ink-400 mt-1">—</div><div class="text-[11px] text-ink-400">V1.0 预留</div></div></div>
+      <div class="bg-white rounded-md border border-ink-100 mb-3 px-3 flex gap-5"><button v-for="tab in p5FilterOptions" :key="tab" @click="p5Filter = tab" class="py-2.5 text-[12px] border-b-2" :class="p5Filter === tab ? 'border-brand-500 text-brand-600 font-medium' : 'border-transparent text-ink-500'">{{ tab }}</button></div>
+      <div class="bg-white rounded-md border border-ink-100 overflow-hidden"><table class="w-full text-left text-[12px]"><thead class="bg-ink-50 text-ink-500"><tr><th class="px-3 py-2">优先级</th><th class="px-3 py-2">任务标题</th><th class="px-3 py-2">RTA · 媒体 · 项目</th><th class="px-3 py-2">场景</th><th class="px-3 py-2">数据质量</th><th class="px-3 py-2">状态</th><th class="px-3 py-2">发现时间</th><th class="px-3 py-2">下一步</th></tr></thead><tbody class="divide-y divide-ink-100"><tr v-for="task in p5VisibleTasks" :key="task.id" @click="onSelectTask(task)" class="hover:bg-brand-50 cursor-pointer"><td class="px-3 py-3">{{ DiagnosisTaskModel.LABELS.priority[task.priority].label }}</td><td class="px-3 py-3 font-medium text-ink-800">{{ task.title }}</td><td class="px-3 py-3">{{ task.target.rtaName }} · {{ task.target.media }} · {{ task.target.project }}</td><td class="px-3 py-3">{{ task.scene.code }} · {{ task.scene.name }}</td><td class="px-3 py-3">{{ DiagnosisTaskModel.LABELS.dataQuality[task.dataQuality.status].label }}<span v-if="task.dataQuality.missingFields.length" class="ml-1 text-amber-600">缺 {{ task.dataQuality.missingFields.length }} 字段</span></td><td class="px-3 py-3">{{ DiagnosisTaskModel.LABELS.status[task.status].label }}</td><td class="px-3 py-3">{{ task.discoveredAt }}</td><td class="px-3 py-3"><button class="text-brand-600 hover:underline" @click.stop="onSelectTask(task)">{{ task.nextAction.label }}</button></td></tr></tbody></table></div>
+      </template>
+      <template v-else-if="currentView === 'taskDetail'">
+      <div v-if="selectedTask" class="space-y-4">
+        <div class="flex items-center justify-between"><button @click="goBackToTasks" class="text-[13px] text-brand-600 hover:underline">← 返回任务列表</button><span class="text-[12px] text-ink-400">任务详情 · {{ selectedTask.id }}</span></div>
+        <div class="bg-white rounded-md border border-ink-100 p-4 flex flex-wrap gap-3 text-[12px]"><span class="badge bg-rose-50 text-rose-700">优先级 {{ DiagnosisTaskModel.LABELS.priority[selectedTask.priority].label }}</span><span class="badge bg-brand-50 text-brand-700">{{ selectedTask.status === 'stale' ? '数据过期' : DiagnosisTaskModel.LABELS.status[selectedTask.status].label }}</span><span>RTA · {{ selectedTask.target.media }}</span><span>发现 {{ selectedTask.discoveredAt }}</span><span>来源 {{ (selectedTask.dataQuality.source || []).join('、') }}</span><span>更新 {{ selectedTask.dataQuality.updatedAt || '当前' }}</span></div>
+        <div class="bg-white rounded-md border border-ink-100 p-5"><h1 class="text-[22px] font-semibold text-ink-800">{{ selectedTask.title }}</h1><p class="mt-2 text-[13px] text-ink-600">{{ selectedTask.observation.description }}</p><div v-if="selectedTask.status !== 'insufficient'" class="mt-3 p-3 rounded bg-brand-50 text-[13px]"><b>当前判断（疑似 / 待确认）：</b>{{ selectedTask.diagnosis.conclusion }}</div></div>
+        <div v-if="selectedTask.status === 'insufficient'" class="bg-amber-50 border border-amber-200 rounded-md p-5"><h2 class="text-[16px] font-semibold">当前证据不足</h2><div class="mt-3 text-[13px]">缺少字段：<span v-for="f in selectedTask.dataQuality.missingFields" :key="f" class="badge bg-white text-amber-700 mr-1">{{ f }}</span><br class="mt-2">受影响判断：{{ (selectedTask.dataQuality.affectedJudgments || []).join('、') }}<br>下一步：{{ selectedTask.nextAction.label }} · {{ selectedTask.nextAction.description }}<br><b>不生成根因结论与处置草稿（数据不足时不补全缺失事实）</b><br><span class="badge bg-ink-100 text-ink-500 mt-2">置信度：none</span></div></div>
+        <div v-else class="bg-white rounded-md border border-ink-100 p-5"><h2 class="text-[16px] font-semibold">诊断推理链</h2><div class="mt-3 grid grid-cols-5 gap-2 text-[12px]"><div class="border rounded p-3"><b>① 观测</b><p>{{ selectedTask.observation.metric }}：{{ selectedTask.observation.value }}<br>{{ selectedTask.observation.description }}</p></div><div class="border rounded p-3"><b>② 规则</b><p v-for="r in selectedTask.diagnosis.matchedRules" :key="r.ruleId">{{ r.ruleId }} · {{ r.name }}<br>{{ r.explanation }}</p></div><div class="border rounded p-3"><b>③ 排除</b><p v-for="e in selectedTask.diagnosis.excludedCauses" :key="e.cause">{{ e.cause }}：{{ e.reason }}<br>证据 {{ (e.evidenceIds || []).join('、') }}</p></div><div class="border rounded p-3"><b>④ 场景</b><p>{{ selectedTask.scene.code }} · {{ selectedTask.scene.name }}</p></div><div class="border rounded p-3"><b>⑤ 判断</b><p>{{ selectedTask.diagnosis.conclusion }}</p><span class="badge bg-amber-50 text-amber-700">置信度：{{ selectedTask.diagnosis.confidence }}</span><p v-if="selectedTask.status === 'stale'" class="text-yellow-700">最近一次有效数据已超过 freshness 窗口，不能代表当前投放状态</p></div></div></div>
+        <div class="bg-white rounded-md border border-ink-100 p-5"><h2 class="text-[16px] font-semibold">证据与数据质量</h2><details v-for="id in selectedTask.diagnosis.evidenceIds" :key="id" class="mt-2 border rounded p-3"><summary class="cursor-pointer">{{ id }}</summary><div class="text-[12px] mt-2">来源：{{ (selectedTask.dataQuality.source || []).join('、') }} · 更新时间：{{ selectedTask.dataQuality.updatedAt || '当前' }} · 新鲜度：{{ selectedTask.dataQuality.freshness }}<br>缺失字段：{{ (selectedTask.dataQuality.missingFields || []).join('、') || '无' }} · 受影响判断：{{ (selectedTask.dataQuality.affectedJudgments || []).join('、') || '无' }}</div></details><div class="mt-3 bg-ink-50 p-3 text-[12px]">数据质量：{{ selectedTask.dataQuality.status }} · 完整度：{{ (selectedTask.dataQuality.completeness * 100).toFixed(0) }}% · 新鲜度：{{ selectedTask.dataQuality.freshness }}<span v-if="selectedTask.dataQuality.updatedAt"> · 最后有效数据：{{ selectedTask.dataQuality.updatedAt }}</span></div></div>
+        <div class="bg-white rounded-md border border-ink-100 p-4"><b>下一步动作：{{ selectedTask.nextAction.label }}</b> · {{ selectedTask.nextAction.description }}</div>
+        <details class="bg-white rounded-md border border-ink-100 p-4"><summary class="cursor-pointer font-semibold">既有演示能力（诊断报告 / 人工确认）</summary><p class="mt-2 text-[11px] text-ink-400">以下为既有演示能力，P5 不包含正式审批与执行闭环（V1.0 实现）</p><button @click="openDiagnosis(selectedTask.target.rtaId)" class="mt-3 bg-white border border-brand-300 text-brand-600 px-3 py-1.5 rounded text-[13px]">打开诊断报告（演示）</button></details>
+        <div class="bg-white rounded-md border border-ink-100 p-5"><h2 class="text-[16px] font-semibold">任务内语境化智能参谋</h2><div ref="taskAssistantListEl" class="h-40 overflow-auto mt-3 space-y-2 text-[12px]"><div v-for="(m,i) in currentTaskSession.messages" :key="i" :class="m.role === 'user' ? 'text-right' : ''"><span class="inline-block rounded px-3 py-2" :class="m.role === 'user' ? 'bg-brand-50' : 'bg-ink-50'">{{ m.text }}</span></div></div><div class="flex gap-2 mt-3"><input v-model="taskAssistantInput" @keyup.enter="askTaskAssistant(taskAssistantInput)" class="flex-1 border rounded px-3 py-2 text-[13px]" placeholder="围绕当前任务、证据与数据质量提问"><button @click="askTaskAssistant(taskAssistantInput)" class="bg-brand-500 text-white rounded px-4">发送</button></div><div class="mt-3 flex flex-wrap gap-2"><button v-for="q in ((selectedTask.assistantContext.suggestedQuestions || []).length ? selectedTask.assistantContext.suggestedQuestions : assistantQuestions)" :key="q" @click="askTaskAssistant(q)" class="text-[11px] text-brand-600 border rounded px-2 py-1">{{ q }}</button></div></div>
+      </div><div v-else class="bg-white rounded-md p-8 text-center text-ink-500">未找到任务</div>
+      </template>
+      <template v-else-if="currentView === 'list'">
 
       <!-- 标题区 -->
       <div class="page-heading flex items-end justify-between mb-3">
