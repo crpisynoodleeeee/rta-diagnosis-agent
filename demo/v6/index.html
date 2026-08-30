@@ -132,6 +132,11 @@
 <script src="./data/mock-media-data-provider.js"></script>
 <script src="./data/readonly-query-tools.js"></script>
 <script src="./data/diagnosis-task-model.js"></script>
+<script src="./governance/tenant.js"></script>
+<script src="./governance/roles.js"></script>
+<script src="./governance/action-draft.js"></script>
+<script src="./governance/audit.js"></script>
+<script src="./governance/index.js"></script>
 
 <!-- 主应用（普通 script + const { createApp, ... } = Vue 解构） -->
 <script>
@@ -2749,6 +2754,51 @@ function preClassify(record) {
 
 const app = createApp({
   setup() {
+    const v10 = V10Governance.createGovernanceCore();
+    const currentRole = ref('optimizer');
+    const governanceDraft = ref(null);
+    const governanceMessage = ref('');
+    const governanceAuditOpen = ref(false);
+    const roleLabels = { observer: '观察者', optimizer: '优化师', approver: '审批人' };
+    const governanceStatusLabels = { draft: '草稿', pending_approval: '待审批', approved: '已批准', rejected: '已拒绝', execution_recorded: '已记录执行', observing: '观察中', reviewed: '已复盘', closed: '已关闭' };
+    const governanceDegradationLabels = { normal: '正常', stale: '数据过期', partial: '数据部分缺失', timeout: '数据超时', permission_denied: '权限不足', cross_tenant_denied: '跨租户拒绝', insufficient: '数据不足' };
+    const governanceDegradationAdvice = { stale: '请刷新数据后再形成处置草稿。', partial: '请补齐缺失字段后再形成处置草稿。', timeout: '请稍后重试并确认数据源可用。', insufficient: '请补齐数据后重新诊断。' };
+    const governanceQualityStatus = computed(() => selectedTask.value && ((selectedTask.value.dataQuality && selectedTask.value.dataQuality.status) || 'normal'));
+    const governanceIsDegraded = computed(() => governanceQualityStatus.value !== 'normal');
+    const governanceTimeline = computed(() => selectedTask.value ? v10.audit.getTimeline({ taskId: selectedTask.value.id }) : []);
+    function governancePermission(action) { return v10.roles.checkPermission(currentRole.value, action).allow; }
+    function governanceButtonTitle(action) { return governancePermission(action) ? '' : '当前角色无权执行此操作'; }
+    function governanceContext() { return v10.tenant.createTenantContext({ tenantId: 'tenant-a', operator: currentRole.value, role: currentRole.value }); }
+    function governanceResult(result) {
+      if (!result) return;
+      if (result.ok) { governanceMessage.value = '操作已完成'; governanceDraft.value = result.draft || governanceDraft.value; }
+      else if (result.error === 'PERMISSION_DENIED') governanceMessage.value = '当前角色无权执行此操作';
+      else if (result.error === 'INVALID_TRANSITION') governanceMessage.value = '非法流转：当前状态不允许此操作';
+      else if (result.error === 'DEGRADED') governanceMessage.value = '数据质量不足，当前不形成确定结论';
+      else governanceMessage.value = result.error || '操作未完成';
+    }
+    function governanceAction(action) {
+      const task = selectedTask.value;
+      if (!task) return;
+      const ctx = governanceContext();
+      let result;
+      if (action === 'create_draft') {
+        if (governanceIsDegraded.value) { governanceMessage.value = governanceDegradationAdvice[governanceQualityStatus.value] || '当前数据质量不支持创建处置草稿'; return; }
+        governanceDraft.value = v10.actionDraft.createDraft({ taskId: task.id, title: task.title, target: task.target, evidenceIds: task.diagnosis.evidenceIds || [], suggestedActions: [task.nextAction.label], successMetrics: ['核心指标恢复并持续观察'], stopRollbackConditions: ['指标继续恶化时回滚'], context: ctx });
+        governanceMessage.value = '已创建处置草稿，请先确认诊断';
+        return;
+      }
+      if (!governanceDraft.value) { governanceMessage.value = '请先创建处置草稿'; return; }
+      if (action === 'confirm_diagnosis') result = v10.actionDraft.confirmDiagnosis(governanceDraft.value, ctx, { status: governanceQualityStatus.value });
+      if (action === 'submit_draft') result = v10.actionDraft.submitDraft(governanceDraft.value, ctx);
+      if (action === 'approve') result = v10.actionDraft.approve(governanceDraft.value, ctx);
+      if (action === 'reject') result = v10.actionDraft.reject(governanceDraft.value, ctx, '审批人拒绝');
+      if (action === 'record_execution') result = v10.actionDraft.recordExecution(governanceDraft.value, ctx, { simulated: true });
+      if (action === 'observe') result = v10.actionDraft.observe(governanceDraft.value, ctx);
+      if (action === 'review') result = v10.actionDraft.review(governanceDraft.value, ctx);
+      if (action === 'close') result = v10.actionDraft.close(governanceDraft.value, ctx);
+      governanceResult(result);
+    }
     // ① 左侧侧边栏菜单（一级菜单 7 项；按 Handoff v1 硬规顺序与默认展开状态）
     //    - 投放管理默认展开 + RTA 默认展开 + 数据中心默认展开
     //    - 投放管理 > RTA 下新增"智能参谋"入口（位于"RTA 实验"后、"数据中心"前）
@@ -2798,9 +2848,9 @@ const app = createApp({
     const p5Tasks = computed(() => DiagnosisTaskModel.buildTasks());
     const selectedTask = computed(() => p5Tasks.value.find(t => t.id === selectedTaskId.value) || null);
     const p5Filter = ref('待关注');
-    const p5FilterOptions = ['待关注', '全部任务', '数据不足', '已查看'];
+    const p5FilterOptions = ['待关注', '全部任务', '数据不足', '已查看', '待审批', '观察中'];
     const p5Counts = computed(() => ({ attention: p5Tasks.value.filter(t => t.status === 'attention').length, high: p5Tasks.value.filter(t => t.priority === 'high').length, insufficient: p5Tasks.value.filter(t => t.status === 'insufficient').length, viewed: p5Tasks.value.filter(t => t.status === 'viewed').length }));
-    const p5VisibleTasks = computed(() => { const f = p5Tasks.value.filter(t => p5Filter.value === '全部任务' || (p5Filter.value === '待关注' && t.status === 'attention') || (p5Filter.value === '数据不足' && t.status === 'insufficient') || (p5Filter.value === '已查看' && t.status === 'viewed')); const rank = t => t.status === 'viewed' ? 4 : t.status === 'insufficient' || t.status === 'stale' ? 2 : t.priority === 'high' ? 0 : t.priority === 'medium' ? 1 : 3; return f.slice().sort((a,b) => rank(a)-rank(b) || a.id.localeCompare(b.id)); });
+    const p5VisibleTasks = computed(() => { const f = p5Tasks.value.filter(t => p5Filter.value === '全部任务' || (p5Filter.value === '待关注' && t.status === 'attention') || (p5Filter.value === '数据不足' && t.status === 'insufficient') || (p5Filter.value === '已查看' && t.status === 'viewed') || (p5Filter.value === '待审批' && (v10.actionDraft.getDraft(t.id) || {}).status === 'pending_approval') || (p5Filter.value === '观察中' && (v10.actionDraft.getDraft(t.id) || {}).status === 'observing')); const rank = t => t.status === 'viewed' ? 4 : t.status === 'insufficient' || t.status === 'stale' ? 2 : t.priority === 'high' ? 0 : t.priority === 'medium' ? 1 : 3; return f.slice().sort((a,b) => rank(a)-rank(b) || a.id.localeCompare(b.id)); });
     function onSelectTask(task) { selectedTaskId.value = task.id; currentView.value = 'taskDetail'; selectedMenuId.value = 'tasks'; }
     function goBackToTasks() { currentView.value = 'tasks'; selectedMenuId.value = 'tasks'; selectedTaskId.value = null; }
     const taskChatSessions = reactive(new Map());
@@ -3168,6 +3218,9 @@ const app = createApp({
       // 侧边栏菜单
       navGroups, selectedMenuId, currentView, selectedTaskId,
       p5Tasks, p5Filter, p5FilterOptions, p5Counts, p5VisibleTasks, onSelectTask, selectedTask, goBackToTasks, DiagnosisTaskModel,
+      v10, currentRole, roleLabels, governanceDraft, governanceMessage, governanceAuditOpen, governanceStatusLabels,
+      governanceQualityStatus, governanceIsDegraded, governanceDegradationLabels, governanceDegradationAdvice, governanceTimeline,
+      governancePermission, governanceButtonTitle, governanceAction,
       taskAssistantInput, taskAssistantListEl, taskIsAsking, currentTaskSession, askTaskAssistant,
       onMenuSelect, goBackToList,
       // 智能参谋工作台（第三步 · 有限上下文连续问答）
@@ -3214,12 +3267,19 @@ const app = createApp({
 
       <template v-if="currentView === 'tasks'">
       <div class="page-heading mb-4"><div class="text-[12px] text-ink-400">诊断工作台</div><h1 class="text-[20px] font-semibold text-ink-800 mt-0.5">诊断工作台 · 任务队列</h1><p class="text-[12px] text-ink-500 mt-1">数据为合成 Mock 数据</p></div>
-      <div class="grid grid-cols-6 gap-3 mb-4"><div v-for="item in [{key:'attention',label:'待关注'},{key:'high',label:'高优先级'},{key:'insufficient',label:'数据不足'},{key:'viewed',label:'已查看'}]" :key="item.key" class="bg-white rounded-md p-3 border border-ink-100"><div class="text-[12px] text-ink-500">{{ item.label }}</div><div class="num text-[24px] font-semibold mt-1 text-red-600">{{ p5Counts[item.key] }}</div></div><div v-for="label in ['待审批','观察中']" :key="label" class="bg-ink-50 rounded-md p-3 border border-ink-200 opacity-70"><div class="text-[12px] text-ink-400">{{ label }}</div><div class="num text-[24px] text-ink-400 mt-1">—</div><div class="text-[11px] text-ink-400">V1.0 预留</div></div></div>
+<div class="grid grid-cols-6 gap-3 mb-4"><div v-for="item in [{key:'attention',label:'待关注'},{key:'high',label:'高优先级'},{key:'insufficient',label:'数据不足'},{key:'viewed',label:'已查看'}]" :key="item.key" class="bg-white rounded-md p-3 border border-ink-100"><div class="text-[12px] text-ink-500">{{ item.label }}</div><div class="num text-[24px] font-semibold mt-1 text-red-600">{{ p5Counts[item.key] }}</div></div><div class="bg-white rounded-md p-3 border border-ink-100"><div class="text-[12px] text-ink-500">待审批</div><div class="num text-[24px] font-semibold mt-1 text-amber-600">{{ v10.actionDraft.countByStatus().pending_approval }}</div></div><div class="bg-white rounded-md p-3 border border-ink-100"><div class="text-[12px] text-ink-500">观察中</div><div class="num text-[24px] font-semibold mt-1 text-blue-600">{{ v10.actionDraft.countByStatus().observing }}</div></div></div>
       <div class="bg-white rounded-md border border-ink-100 mb-3 px-3 flex gap-5"><button v-for="tab in p5FilterOptions" :key="tab" @click="p5Filter = tab" class="py-2.5 text-[12px] border-b-2" :class="p5Filter === tab ? 'border-brand-500 text-brand-600 font-medium' : 'border-transparent text-ink-500'">{{ tab }}</button></div>
       <div class="bg-white rounded-md border border-ink-100 overflow-hidden"><table class="w-full text-left text-[12px]"><thead class="bg-ink-50 text-ink-500"><tr><th class="px-3 py-2">优先级</th><th class="px-3 py-2">任务标题</th><th class="px-3 py-2">RTA · 媒体 · 项目</th><th class="px-3 py-2">场景</th><th class="px-3 py-2">数据质量</th><th class="px-3 py-2">状态</th><th class="px-3 py-2">发现时间</th><th class="px-3 py-2">下一步</th></tr></thead><tbody class="divide-y divide-ink-100"><tr v-for="task in p5VisibleTasks" :key="task.id" @click="onSelectTask(task)" class="hover:bg-brand-50 cursor-pointer"><td class="px-3 py-3">{{ DiagnosisTaskModel.LABELS.priority[task.priority].label }}</td><td class="px-3 py-3 font-medium text-ink-800">{{ task.title }}</td><td class="px-3 py-3">{{ task.target.rtaName }} · {{ task.target.media }} · {{ task.target.project }}</td><td class="px-3 py-3">{{ task.scene.code }} · {{ task.scene.name }}</td><td class="px-3 py-3">{{ DiagnosisTaskModel.LABELS.dataQuality[task.dataQuality.status].label }}<span v-if="task.dataQuality.missingFields.length" class="ml-1 text-amber-600">缺 {{ task.dataQuality.missingFields.length }} 字段</span></td><td class="px-3 py-3">{{ DiagnosisTaskModel.LABELS.status[task.status].label }}</td><td class="px-3 py-3">{{ task.discoveredAt }}</td><td class="px-3 py-3"><button class="text-brand-600 hover:underline" @click.stop="onSelectTask(task)">{{ task.nextAction.label }}</button></td></tr></tbody></table></div>
       </template>
       <template v-else-if="currentView === 'taskDetail'">
       <div v-if="selectedTask" class="space-y-4">
+        <div class="bg-white rounded-md border border-brand-200 p-5">
+          <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="text-[16px] font-semibold">V1.0 治理操作</h2><p class="text-[11px] text-ink-400 mt-1">V1.0 可治理诊断闭环（Mock-Ready）· 数据均为合成 Mock，不含真实媒体写接口，人工审批为模拟流程</p></div><label class="text-[12px]">当前角色 <select v-model="currentRole" class="ml-2 border rounded px-2 py-1"><option value="observer">观察者</option><option value="optimizer">优化师</option><option value="approver">审批人</option></select></label></div>
+          <div class="mt-3 flex flex-wrap gap-2"><span class="badge" :class="governanceQualityStatus === 'normal' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'">数据质量：{{ governanceDegradationLabels[governanceQualityStatus] || governanceQualityStatus }}</span><span v-if="governanceDraft" class="badge bg-brand-50 text-brand-700">流程：{{ governanceStatusLabels[governanceDraft.status] }}</span><span v-if="governanceMessage" class="text-[12px] text-amber-700">{{ governanceMessage }}</span></div>
+          <div v-if="governanceIsDegraded" class="mt-3 bg-amber-50 border border-amber-200 rounded p-3 text-[12px]"><b>暂不形成确定结论</b> · {{ governanceDegradationAdvice[governanceQualityStatus] || selectedTask.nextAction.description }}</div>
+          <div class="mt-4 flex flex-wrap gap-2"><button v-if="!governanceDraft && !governanceIsDegraded" @click="governanceAction('create_draft')" :disabled="!governancePermission('create_draft')" :title="governanceButtonTitle('create_draft')" class="border border-brand-300 text-brand-700 rounded px-3 py-1.5 text-[12px] disabled:opacity-40">创建处置草稿</button><button v-if="governanceDraft && !governanceDraft.diagnosisConfirmed" @click="governanceAction('confirm_diagnosis')" :disabled="!governancePermission('confirm_diagnosis')" :title="governanceButtonTitle('confirm_diagnosis')" class="border border-emerald-300 text-emerald-700 rounded px-3 py-1.5 text-[12px] disabled:opacity-40">确认诊断</button><button v-if="governanceDraft && governanceDraft.status === 'draft' && governanceDraft.diagnosisConfirmed" @click="governanceAction('submit_draft')" :disabled="!governancePermission('submit_draft')" :title="governanceButtonTitle('submit_draft')" class="bg-brand-500 text-white rounded px-3 py-1.5 text-[12px] disabled:opacity-40">提交审批</button><button v-if="governanceDraft && governanceDraft.status === 'pending_approval'" @click="governanceAction('approve')" :disabled="!governancePermission('approve')" :title="governanceButtonTitle('approve')" class="bg-emerald-600 text-white rounded px-3 py-1.5 text-[12px] disabled:opacity-40">批准</button><button v-if="governanceDraft && governanceDraft.status === 'pending_approval'" @click="governanceAction('reject')" :disabled="!governancePermission('reject')" :title="governanceButtonTitle('reject')" class="border border-orange-300 text-orange-700 rounded px-3 py-1.5 text-[12px] disabled:opacity-40">拒绝</button><button v-if="governanceDraft && governanceDraft.status === 'approved'" @click="governanceAction('record_execution')" :disabled="!governancePermission('record_execution')" :title="governanceButtonTitle('record_execution')" class="bg-brand-500 text-white rounded px-3 py-1.5 text-[12px] disabled:opacity-40">记录执行（模拟）</button><button v-if="governanceDraft && governanceDraft.status === 'execution_recorded'" @click="governanceAction('observe')" class="border rounded px-3 py-1.5 text-[12px]">观察</button><button v-if="governanceDraft && governanceDraft.status === 'observing'" @click="governanceAction('review')" class="border rounded px-3 py-1.5 text-[12px]">复盘</button><button v-if="governanceDraft && governanceDraft.status === 'reviewed'" @click="governanceAction('close')" class="border rounded px-3 py-1.5 text-[12px]">关闭</button></div>
+        </div>
+        <details class="bg-white rounded-md border border-ink-100 p-4"><summary class="cursor-pointer font-semibold text-[14px]">审计时间线（{{ governanceTimeline.length }}）</summary><div class="mt-3 space-y-2 text-[11px]"><div v-for="(ev,i) in governanceTimeline" :key="i" class="border-t pt-2"><span class="num text-ink-400">{{ ev.timestamp }}</span> · <b>{{ ev.action }}</b> · {{ ev.operator }} / {{ roleLabels[ev.role] || ev.role }} · {{ ev.beforeStatus || '-' }}→{{ ev.afterStatus || '-' }} <span class="badge ml-1" :class="ev.result === 'success' ? 'bg-emerald-50 text-emerald-700' : (ev.result === 'denied' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700')">{{ ev.result }}</span></div><div v-if="!governanceTimeline.length" class="text-ink-400">暂无治理事件</div></div></details>
         <div class="flex items-center justify-between"><button @click="goBackToTasks" class="text-[13px] text-brand-600 hover:underline">← 返回任务列表</button><span class="text-[12px] text-ink-400">任务详情 · {{ selectedTask.id }}</span></div>
         <div class="bg-white rounded-md border border-ink-100 p-4 flex flex-wrap gap-3 text-[12px]"><span class="badge bg-rose-50 text-rose-700">优先级 {{ DiagnosisTaskModel.LABELS.priority[selectedTask.priority].label }}</span><span class="badge bg-brand-50 text-brand-700">{{ selectedTask.status === 'stale' ? '数据过期' : DiagnosisTaskModel.LABELS.status[selectedTask.status].label }}</span><span>RTA · {{ selectedTask.target.media }}</span><span>发现 {{ selectedTask.discoveredAt }}</span><span>来源 {{ (selectedTask.dataQuality.source || []).join('、') }}</span><span>更新 {{ selectedTask.dataQuality.updatedAt || '当前' }}</span></div>
         <div class="bg-white rounded-md border border-ink-100 p-5"><h1 class="text-[22px] font-semibold text-ink-800">{{ selectedTask.title }}</h1><p class="mt-2 text-[13px] text-ink-600">{{ selectedTask.observation.description }}</p><div v-if="selectedTask.status !== 'insufficient'" class="mt-3 p-3 rounded bg-brand-50 text-[13px]"><b>当前判断（疑似 / 待确认）：</b>{{ selectedTask.diagnosis.conclusion }}</div></div>
