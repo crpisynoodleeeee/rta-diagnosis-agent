@@ -1,7 +1,7 @@
 # RTA 投放诊断 Agent · Demo 
 
-> **当前正式发布版本：V0.9.0**（Demo 运行入口仍为 `v6`；v1-v5 及旧 prototype / Vue+Vite 工程均已废弃）
-> **V0.9.0 定位：**完成服务端 Staging 只读接入准备、凭证/脱敏/审计/监控基础模块和离线 32/32 验收；真实 Staging 联调仍待 API 文档、测试权限与明确授权。
+> **当前正式发布版本：V1.0.0**（Demo 运行目录为 `demo/V1.0`；v1-v5 及旧 prototype / Vue+Vite 工程均已废弃）
+> **V1.0.0 定位：**可治理诊断决策闭环 Mock-Ready：异常诊断工作台 + 角色权限/处置草稿审批/审计时间线/稳定性降级可视化/观察复盘 + 证据面板产品化与业务语言收口；真实 Staging 联调仍待企业授权。
 > **当前页面边界：**公开 Demo 的功能与数据路径保持 V0.8 离线 Mock/Replay 能力，不连接真实媒体 API，不包含真实账户、凭证或写操作。
 > - 对齐 PRD v0.2.1（《项目三：RTA 投放诊断 Agent · PRD v0.2.1》）
 > - 对齐《Agent 输入输出结构契约 v0.3》
@@ -10,9 +10,9 @@
 > - LLM 完全可选 · 默认离线模板 · Key 只存在于代理进程环境变量
 > - 含「智能参谋」问答工作台（per-RTA 有限上下文问答 · v0.6 诊断解释 + v0.7 查询能力 + v0.8 Provider 驱动只读工具 · 模板优先 + LLM 可选增强）
 
-> **⚠️ AI 模式 / DeepSeek 接入（V0.9.0 发布后的 Demo 安全边界，运行方式不变）**
+> **⚠️ AI 模式 / DeepSeek 接入（V1.0.0 Demo 安全边界，运行方式不变）**
 > - 公开 Demo 默认 `LLM_CONFIG.enabled = false`，使用**模板分派**，无需联网即可运行
-> - 本地增强模式为**可选能力**：勾选 UI「AI 模式」后请求本机 `llm-proxy.mjs`，不属于公开 Demo 的默认运行链路
+> - AI 模式入口已隐藏（P4），本地增强能力保留；不属于公开 Demo 的默认运行链路
 > - DeepSeek Key **只由本地代理进程**从环境变量 `DEEPSEEK_API_KEY` 读取；前端代码、GitHub Pages 和发布文档不保存真实 Key
 > - LLM 任意失败（代理未启动 / Key 未设置 → 503 `LLM_NOT_CONFIGURED` / 网络错 / 超时 / JSON 错 / 校验不过 / Golden Case 不符）→ 一律回退模板，抽屉角标保持「模板」
 
@@ -50,18 +50,29 @@ demo/V1.0/
 ├── _verify_assistant.cjs # 智能参谋 47 个 stub 验证（静态扫描 + 动态用例，零外网）
 ├── _verify_v07.cjs       # v0.7 QueryContext / Mock 只读查询层 30 个验收用例
 ├── _verify_v08_provider.cjs # v0.8 Provider / Adapter / 只读工具 34 个验收用例
+├── _verify_p5.cjs       # P5 异常诊断工作台专项验收（6/6）
+├── _verify_p5_model.cjs # P5 DiagnosisTask 模型专项验收
+├── _verify_v10.cjs      # V1.0 治理领域层专项验收（7/7）
+├── _verify_v10p3.cjs    # V1.0 P3 证据面板静态断言（20/20）
 ├── data/
+│   ├── diagnosis-task-model.js # DiagnosisTask 模型 + 8 条合成任务
 │   ├── media-data-provider.js # 统一只读 Provider 基类、元数据和错误模型
 │   ├── mock-media-data-provider.js # Mock 数据 Provider 与标准化读取
 │   ├── replay-media-adapter.js # 合成媒体响应回放、缓存和新鲜度处理
 │   └── readonly-query-tools.js # 只读工具白名单、Provider 质量降级与来源挂载
+├── governance/          # 纯前端 Mock 治理领域层
+│   ├── tenant.js        # 租户上下文与隔离
+│   ├── roles.js         # observer/optimizer/approver 权限
+│   ├── action-draft.js  # 处置草稿与审批状态机
+│   ├── audit.js         # 审计事件与时间线
+│   └── index.js         # 治理领域层统一出口
 ├── _proxy-test.sh        # llm-proxy 启动冒烟测试脚本（可选运维工具）
 └── vendor/
     ├── vue.global.js     # Vue 3.4.38 UMD（525KB，已验证完整）
     └── tailwind.js       # Tailwind Play CDN 自执行版（510KB，已验证完整）
 ```
 
-> **文件清单**：本期主页面 1 文件（index.html）+ 6 个验证脚本 + 1 个代理冒烟脚本 + 3 个 Provider/工具模块 + 2 个本地 vendor（`vue.global.js`、`tailwind.js`）。
+> **文件清单**：以本目录实际文件为准；V1.0 新增 DiagnosisTask 模型、4 个专项验收脚本及纯前端 Mock 治理领域层。
 
 ---
 
@@ -83,7 +94,7 @@ demo/V1.0/
 | 抽屉 AI 来源角标 | 顶部头部显示「AI 生成」（紫）/「模板」（灰），反映七段式由模板还是 LLM 生成 | ✅ |
 | 底部 Agent 边界声明 | AI 不自动修改真实配置 | ✅ |
 
-### 3.2 诊断抽屉（母版 B）
+### 3.2 诊断抽屉（母版 B，既有演示能力：完整诊断报告）
 
 | 区域 | 内容 | 状态 |
 | --- | --- | --- |
@@ -160,6 +171,27 @@ demo/V1.0/
 | 自动化验证 | `_verify_assistant.cjs`：47 个用例（8 项 forbidden 静态扫描 + 9 项 required 断言 + 30 项动态用例） | ✅ |
 
 > 智能参谋只回答**当前所选 RTA 在当前 Mock/Replay 数据范围内**的诊断、分析和只读查数问题；它是诊断归因层的"追问/解释 + 有证据查数"入口，不构成通用问数 Agent（不做跨 RTA 历史查询、不做行业大盘、不直接执行任何配置变更）。
+
+### 3.6 异常诊断工作台（P5）
+
+- **任务队列**：提供待关注、全部、数据不足、已查看、待审批、观察中筛选 tab 与对应计数卡。
+- **任务详情四件套**：任务摘要、判断过程五步、判断依据三组证据、下一步动作。
+- **可信分支**：数据不足或数据过期时进入对应分支，不生成伪结论。
+- **任务内语境化智能参谋**：限定当前任务上下文，通过 `blockedTopics` 拒答越界或执行类问题，并以结构化回答卡呈现结论与证据。
+
+### 3.7 V1.0 可治理诊断闭环（Mock-Ready）
+
+- `observer` / `optimizer` / `approver` 三类角色遵循最小权限。
+- 处置草稿状态机：`draft` → `pending_approval` → `approved/rejected` → `execution_recorded` → `observing` → `reviewed` → `closed`。
+- 提供审计时间线，以及 `normal` / `stale` / `partial` / `timeout` / `permission_denied` / `cross_tenant_denied` 稳定性与降级状态可视化。
+- 支持执行记录后的观察与复盘关闭；拒绝后可重建草稿。
+- 治理核心位于 `demo/V1.0/governance/`，是纯前端 Mock 领域层，零真实写接口。
+
+### 3.8 证据面板产品化（P3）
+
+- 证据按「支持当前判断 / 已排除的原因 / 当前仍需确认」三类分组。
+- 展示数据质量摘要，证据采用稳定的 `EV-*` 编号。
+- 技术详情默认折叠，页面主层级使用面向投放优化师的业务语言。
 
 ---
 
@@ -274,7 +306,7 @@ const ai = runAiLayer(record, signals, scenario);
 | `model` | `deepseek-chat` | DeepSeek 模型名 |
 | `timeoutMs` | `10000` | AbortController 超时；超时即回退模板 |
 | `temperature` | `0.4` | 偏稳态 |
-| `enabled` | `false` | 默认关闭（演示稳定）；勾选 UI「AI 模式」即同步切换为 `true` |
+| `enabled` | `false` | 默认关闭（演示稳定）；AI 模式入口已隐藏（P4），本地增强能力保留 |
 | ~~`apiKey`~~ | ❌ 已删除 | 严禁在前端持有或提交。Key 只存在于代理进程环境变量 |
 
 **如何开启真实 LLM（运维流程）**
@@ -383,7 +415,7 @@ LLM 可选增强仍复用本地代理；对查询型回答，校验器要求输�
 
 ---
 
-## 8. 自查结果（11 项）
+## 8. 自查结果（14 项）
 
 | # | 自查项 | 工具 | 结果 |
 | --- | --- | --- | --- |
@@ -398,21 +430,24 @@ LLM 可选增强仍复用本地代理；对查询型回答，校验器要求输�
 | ⑨ | 智能参谋 47 个用例全过（8 项 forbidden 静态扫描 + 9 项 required 断言 + 30 项动态用例，覆盖诊断解释意图 + 执行拒绝 + 超范围 + 数据不足） | `_verify_assistant.cjs` | ✅ 47/47 |
 | ⑩ | v0.7 查询层 30 个用例全过（Schema / evidenceId / 指标 / 趋势 / 组间 / 配置 / RTA 隔离 / 冲突拒答 / LLM 查询证据校验） | `_verify_v07.cjs` | ✅ 30/30 |
 | ⑪ | v0.8 Provider 通过（契约 / Mock 抽离 / 回放 Adapter / 缓存 / 新鲜度 / 只读工具白名单 / 来源挂载 / 错误降级） | `_verify_v08_provider.cjs` | ✅ 34/34 |
+| ⑫ | P5 异常诊断工作台专项 + 一键回归 | `_verify_p5.cjs` | ✅ 6/6 + 回归 8/8 |
+| ⑬ | V1.0 治理领域层专项 | `_verify_v10.cjs` | ✅ 7/7 |
+| ⑭ | P3 证据面板静态断言 | `_verify_v10p3.cjs` | ✅ 20/20 |
 
 ---
 
 ## 9. 演示路径（建议）
 
-1. **打开页面**：默认展示 10 条 RTAID 列表，第 1 行（juliang-rta-2086）红底 + 「预算未达标」徽标。
-2. **Golden Case 演示**：点击第 1 行「发起诊断」蓝按钮 → 抽屉滑入 → 1.2s 读取 + 1.8s 诊断 → 700ms 自动到「待人工确认」→ 查看七段式输出（主因 = 准入门槛 40%→80% / 建议 = 80%→60%）。
-3. **CPA 过高演示**：点击第 2 行（tencent-rta-3112）「发起诊断」→ 场景标签「S0 配置故障 + CPA 过高」→ 查看 AI 建议「收人群 + 降出价」。
-4. **可安全放量演示**：点击第 3 行（huawei-rta-5040）「发起诊断」→ 场景「S7 + 可安全放量」→ 建议「日预算分层加码」。
-5. **数据不足演示**：勾选右上角「演示数据不足模式」→ 任意行点击 → 抽屉显示 insufficient 状态 + 缺失字段清单 + 「补全后重新诊断」按钮。
-6. **10 状态机演示**：在 Golden Case 抽屉里依次点「批准方案」→「我已执行」→「复盘完成」→「重新诊断」→ 可遍历 EXECUTING / WAITING / REVIEWED / 重新走诊断。
-7. **术语对照表**：抽屉最底部「📖 术语对照表（黑话翻译）」默认折叠，点击展开可看 10 个术语翻译。
-8. **技术详情**：抽屉倒数第二段「07 · 人工确认 + 技术详情」默认折叠，点击展开可看 RTAID/实验 ID/分桶/请求 ID/日志路径/configBefore/After 等。
-9. **AI 模式演示（需先启动本地代理 + 设置 DEEPSEEK_API_KEY）**：在终端 `export DEEPSEEK_API_KEY=sk-xxx`（Windows PowerShell: `$env:DEEPSEEK_API_KEY='sk-xxx'`）→ `cd demo/V1.0 && node llm-proxy.mjs` → 浏览器打开 index.html → 勾选右上角「AI 模式 · DeepSeek」→ 任意行点击「发起诊断」→ 抽屉先出现「模板」（灰角标），约 1-3s 后若 LLM 通过 5 项校验 + Golden Case 特判，角标自动变为「AI 生成」并 patch oneLiner / managerSummary / operationsNote / recommendations 文案；任何失败链路（代理未启动 / Key 未设置 503 / 网络断 / 校验不过 / Golden Case 不符）→ 角标保持「模板」，UI 不崩。**前端不会显示、不会要求你填写任何 Key**。
-10. **智能参谋演示**：左侧菜单「投放管理 > RTA > 智能参谋」→ 选择 RTAID → 点击右侧推荐问题（如"这个 RTA 现在有什么异常？"）→ 模板秒回；追问"为什么预算没有跑出去？""建议调整什么，调整后观察哪些指标？""回滚条件是什么？" → 命中诊断解释回答；输入"当前 CPA、转化数和 QPS 指标是多少？""参竞率趋势从开始到最后下降了多少？""对照组和实验组对比如何？""配置变更记录是什么？" → 命中 Provider 驱动的只读查询回答，并显示 `EV-*` 证据引用；输入"直接帮我加预算" → 触发 execute_refuse 拒绝执行并引导走人工确认流程；输入"别的 RTA 呢？" → out_of_scope 说明只能回答当前 RTA；切换 RTA → 会话自动重置。
+1. **默认入口：诊断工作台**：打开页面进入任务队列，通过待关注、全部、数据不足、已查看、待审批、观察中 tab 与计数卡筛选 8 条合成诊断任务，点击任务查看详情四件套。
+2. **治理闭环演示**：T001（待审批）切换 approver 后批准或拒绝；拒绝后由 optimizer 重建草稿并重新提交。T006（观察中）录入复盘、完成复盘并关闭，沿审计时间线核对每一步留痕。
+3. **既有列表页/抽屉路径**：进入「RTA 配置」，默认展示 10 条 RTAID 列表；点击第 1 行（juliang-rta-2086）「发起诊断」→ 抽屉滑入 → 查看完整诊断报告（主因 = 准入门槛 40%→80% / 建议 = 80%→60%）。
+4. **CPA 过高演示**：点击第 2 行（tencent-rta-3112）「发起诊断」→ 场景标签「S0 配置故障 + CPA 过高」→ 查看 AI 建议「收人群 + 降出价」。
+5. **可安全放量演示**：点击第 3 行（huawei-rta-5040）「发起诊断」→ 场景「S7 + 可安全放量」→ 建议「日预算分层加码」。
+6. **数据不足演示**：勾选右上角「演示数据不足模式」→ 任意行点击 → 抽屉显示 insufficient 状态 + 缺失字段清单 + 「补全后重新诊断」按钮。
+7. **10 状态机演示**：在 Golden Case 抽屉里依次点「批准方案」→「我已执行」→「复盘完成」→「重新诊断」→ 可遍历 EXECUTING / WAITING / REVIEWED / 重新走诊断。
+8. **术语对照表**：抽屉最底部「📖 术语对照表（黑话翻译）」默认折叠，点击展开可看 10 个术语翻译。
+9. **技术详情**：抽屉倒数第二段「07 · 人工确认 + 技术详情」默认折叠，点击展开可看 RTAID/实验 ID/分桶/请求 ID/日志路径/configBefore/After 等。
+10. **智能参谋演示**：进入「智能参谋」→ 选择 RTAID → 点击推荐问题 → 模板秒回；指标、趋势、组间与配置查询显示 `EV-*` 证据引用；执行类请求触发拒答并引导走人工确认流程。AI 模式入口已隐藏（P4），本地增强能力保留，不作为默认演示路径。
 
 ---
 
@@ -432,9 +467,9 @@ LLM 可选增强仍复用本地代理；对查询型回答，校验器要求输�
 1. **第三方字段【待核验】**：BidURL、媒体侧 RTAID 映射、SecretKey 等媒体侧字段保留 mock 标注，真实接入前需核验。
 2. **执行日志缺回放**：本期不做单次请求的全链路回放（按 PRD §3.2 不纳入）。
 3. **场景叙事模板**：8 个场景（S0-S7）均有独立完整叙事分支（oneLiner / managerSummary / operationsNote / causes / affectedScope / recommendations 七段式），与 S3 Golden Case 同等深度。其中 S2 命中率下降提供 2 套建议（人群回滚 + 字段放宽），S4 出价/竞价提供 2 套建议（出价回调 + 小流量试探）；S1/S5/S6 明确体现"不调 RTA 策略 / 先排障 / 先修回传"的边界判断。末尾保留一段防御性兜底，仅用于未匹配 sceneId 的情况（新增场景未同步时保护，正常流程不会进入）。
-4. **AI 层接入方式（v6 final 安全版）**：方案 B = 浏览器 → 本地代理 `llm-proxy.mjs` → DeepSeek。当前 `LLM_CONFIG.enabled = false`，AI 层仅返回 `buildTemplateNarrative` 输出，与 v6 上一版本行为完全一致；勾选 UI「AI 模式」后请求本地代理。**前端不持有、不显示、不要求填写任何 Key**——Key 仅存在于代理进程的 `DEEPSEEK_API_KEY` 环境变量（启动时显式标注 Key 状态，但不打印 Key 内容）。函数签名对齐《AI 层设计与评测方案》§4.1，可无痛替换为真实 LLM 调用。
+4. **AI 层接入方式（LLM 安全版）**：方案 B = 浏览器 → 本地代理 `llm-proxy.mjs` → DeepSeek。当前 `LLM_CONFIG.enabled = false`，默认仅返回 `buildTemplateNarrative`；AI 模式入口已隐藏（P4），本地增强能力保留。**前端不持有、不显示、不要求填写任何 Key**——Key 仅存在于代理进程的 `DEEPSEEK_API_KEY` 环境变量（启动时显式标注 Key 状态，但不打印 Key 内容）。函数签名对齐《AI 层设计与评测方案》§4.1。
 5. **跨媒体字段差异**：分桶方式（平台/客户）、出价方式（系数/CPA/CPC）已在对象模型层覆盖，但具体媒体差异（VIVO 毫分、荣耀 priceRate 等）保留 mock 标注。
-6. **LLM 接入为可选开关**：默认关闭走模板，演示稳定无网也能跑；切换至真实 LLM 需要"运维在启动代理前 `export DEEPSEEK_API_KEY=<key>` → `node llm-proxy.mjs` → 浏览器勾选 AI 模式"。LLM 失败 / 校验不过 / 超时 / 网络错 / JSON 错 / Golden Case 不符 / 代理未启动 (ConnectionRefused) / Key 未设置 (503 LLM_NOT_CONFIGURED) 一律回退模板，`_verify_llm.cjs` 10/10 覆盖所有路径（含 3 项静态扫描断言：前端无 apiKey / 无 Authorization 头 / 无"前端填 Key"提示）。`llm-proxy.mjs` 是核心代码，**前端调用是可选的，不影响模板演示路径**。**Key 严禁出现在前端代码或截图；真实产品中应使用服务端 secret manager。**
+6. **LLM 接入为保留的本地增强能力**：默认关闭走模板，演示稳定无网也能跑；AI 模式入口已隐藏（P4）。LLM 失败 / 校验不过 / 超时 / 网络错 / JSON 错 / Golden Case 不符 / 代理未启动 (ConnectionRefused) / Key 未设置 (503 LLM_NOT_CONFIGURED) 一律回退模板，`_verify_llm.cjs` 10/10 覆盖所有路径。**Key 严禁出现在前端代码或截图；真实产品中应使用服务端 secret manager。**
 7. **智能参谋为受限问答**：只回答**当前所选 RTA 在当前数据范围内**的诊断与分析问题（9 类意图），不提供跨 RTA 历史查询、行业大盘或实时媒体状态；执行类请求一律拒绝并引导走人工确认流程。与诊断抽屉共用同一份 `DiagnosisReport` 事实，保证主因/建议口径一致。默认模板离线可用；LLM 增强为可选（复用本地代理通道，Key 仍只在代理进程）。`_verify_assistant.cjs` 47/47 覆盖全部意图与边界分支。
 
 ---
@@ -464,4 +499,4 @@ LLM 可选增强仍复用本地代理；对查询型回答，校验器要求输�
 
 ---
 
-_最后更新：2026-08-26 · V1.0 Demo 对齐版（智能参谋问答工作台 + LLM 安全版 + 数据范围 + 蓝图定位）_
+_最后更新：2026-08-31 · V1.0 拉齐版_
