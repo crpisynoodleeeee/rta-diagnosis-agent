@@ -11,7 +11,7 @@
 //   - 缺 Key → 503 { error: 'LLM_NOT_CONFIGURED' }，前端 catch 后静默回退模板；
 //   - 仅绑 127.0.0.1，局域网不可达。
 //
-// 启动：cd demo/v6 && DEEPSEEK_API_KEY=sk-xxx node llm-proxy.mjs
+// 启动：cd demo/V1.0 && DEEPSEEK_API_KEY=sk-xxx node llm-proxy.mjs
 //      （也支持在 shell 里 `export DEEPSEEK_API_KEY=sk-xxx` 后再 `node llm-proxy.mjs`）
 //
 // 注：endpoint 默认指向 http://127.0.0.1:8787/llm（见 index.html LLM_CONFIG.endpoint）。

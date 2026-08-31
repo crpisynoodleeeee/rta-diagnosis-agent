@@ -78,13 +78,13 @@ AI/模板诊断输出
 | [MVP 诊断规则表](MVP诊断规则表.md) | D1-D14 规则与阈值 |
 | [RTA 对象模型与字段清单](RTA对象模型与字段清单.md) | O1-O11 对象模型 |
 | [Mock 数据口径说明](Mock数据口径说明.md) | 数据来源层级和模拟数据边界 |
-| [Demo v6 说明](demo/v6/README.md) | 功能、架构、LLM 接入和本地运行 |
+| [Demo V1.0 说明](demo/V1.0/README.md) | 功能、架构、LLM 接入和本地运行 |
 | [部署说明](docs/DEPLOYMENT.md) | GitHub Pages、本地 Demo 和发布检查 |
 | [Changelog](CHANGELOG.md) | 版本变更记录 |
 
 ## 验收
 
-在 `demo/v6` 目录运行：
+在 `demo/V1.0` 目录运行：
 
 ```powershell
 node _verify.cjs

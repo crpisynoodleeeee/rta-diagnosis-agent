@@ -1,7 +1,7 @@
 # 项目三：Agent 输入输出结构契约 v0.3
 
 > 定义 RTA 诊断 Agent 的输入数据契约（系统自动读取 + 用户补充）与输出契约（DiagnosisReport）。
-> 输出契约与 `demo/v6/index.html` 的规则引擎输出逐字段对齐，确保规则引擎/Agent 输出可直接替换 demo mock 数据。
+> 输出契约与 `demo/V1.0/index.html` 的规则引擎输出逐字段对齐，确保规则引擎/Agent 输出可直接替换 demo mock 数据。
 > 本契约为版本化约定：字段变更需同步更新类型定义、规则引擎输出和前端渲染。
 
 ---

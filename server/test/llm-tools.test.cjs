@@ -1,8 +1,8 @@
 const assert = require('assert');
-const contract = require('../../demo/v6/data/media-data-provider.js');
-const { MockMediaDataProvider } = require('../../demo/v6/data/mock-media-data-provider.js');
-const { ReplayMediaAdapter } = require('../../demo/v6/data/replay-media-adapter.js');
-const tools = require('../../demo/v6/data/readonly-query-tools.js');
+const contract = require('../../demo/V1.0/data/media-data-provider.js');
+const { MockMediaDataProvider } = require('../../demo/V1.0/data/mock-media-data-provider.js');
+const { ReplayMediaAdapter } = require('../../demo/V1.0/data/replay-media-adapter.js');
+const tools = require('../../demo/V1.0/data/readonly-query-tools.js');
 
 let passed = 0;
 function test(name, fn) {

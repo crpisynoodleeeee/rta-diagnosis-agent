@@ -1,5 +1,5 @@
 ﻿# deploy-ghpages.ps1
-# 一键部署 demo/v6 到 gh-pages 分支（GitHub Pages）
+# 一键部署 demo/V1.0 到 gh-pages 分支（GitHub Pages）
 # 用法：
 #   1. 先关联远端：git remote add origin https://github.com/<用户名>/<仓库名>.git
 #   2. .\deploy-ghpages.ps1              # 构建 gh-pages 分支并推送
@@ -27,7 +27,7 @@ function Invoke-Git {
 }
 
 # ── 前置校验 ──────────────────────────────────────────────
-if (-not (Test-Path (Join-Path $demo "index.html"))) { throw "未找到 demo/v6/index.html，请确认在仓库根目录运行" }
+if (-not (Test-Path (Join-Path $demo "index.html"))) { throw "未找到 demo/V1.0/index.html，请确认在仓库根目录运行" }
 if (-not (Test-Path (Join-Path $demo "vendor\vue.global.js"))) { throw "vendor/vue.global.js 缺失，无法部署" }
 
 $current = (Invoke-Git @('rev-parse', '--abbrev-ref', 'HEAD')).Trim()
@@ -35,7 +35,7 @@ $current = (Invoke-Git @('rev-parse', '--abbrev-ref', 'HEAD')).Trim()
 $dirty = (& git status --porcelain 2>$null)
 if ($dirty) { throw "工作区存在未提交/未跟踪文件，请先 commit 或 stash 再运行部署脚本：`n$($dirty -join "`n")" }
 
-# 把 demo/v6 先暂存到系统临时目录（避免清理工作区时误删 main 上未提交的文件）
+# 把 demo/V1.0 先暂存到系统临时目录（避免清理工作区时误删 main 上未提交的文件）
 $stage = Join-Path $env:TEMP ("ghpages-" + [guid]::NewGuid().ToString("N").Substring(0,8))
 New-Item -ItemType Directory -Path $stage | Out-Null
 try {
@@ -56,7 +56,7 @@ try {
   & git rm -rf --quiet . 2>$null
   Get-ChildItem -Force | Where-Object { $_.Name -ne ".git" } | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
-  # ── 拷贝 demo/v6 到分支根 ────────────────────────────────
+  # ── 拷贝 demo/V1.0 到分支根 ────────────────────────────────
   Copy-Item (Join-Path $stage "*") . -Recurse -Force
 
   # ── 提交 ──────────────────────────────────────────────────

@@ -148,7 +148,7 @@ v0.7 Demo 的查询型回答增加额外校验：若 LLM 输出指标、趋势�
 
 ## 5. AI 层输出契约
 
-v0.6 当前模板实现返回的 AI 字段如下，和 `demo/v6/index.html` 的 `runAiLayer` 对齐：
+v0.6 当前模板实现返回的 AI 字段如下，和 `demo/V1.0/index.html` 的 `runAiLayer` 对齐：
 
 ```ts
 interface AILayerOutputV06 {

@@ -2,7 +2,7 @@
 # v6 LLM 代理连通性测试
 set +e
 
-cd "D:/AI_Codex/Projects/program3-r/demo/v6"
+cd "D:/AI_Codex/Projects/program3-r/demo/V1.0"
 
 # 先确保没有遗留进程
 pkill -f "llm-proxy.mjs" 2>/dev/null

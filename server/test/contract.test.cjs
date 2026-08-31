@@ -1,9 +1,9 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const c = require('../../demo/v6/data/media-data-provider.js');
-const { ReplayMediaAdapter } = require('../../demo/v6/data/replay-media-adapter.js');
-const { MockMediaDataProvider } = require('../../demo/v6/data/mock-media-data-provider.js');
+const c = require('../../demo/V1.0/data/media-data-provider.js');
+const { ReplayMediaAdapter } = require('../../demo/V1.0/data/replay-media-adapter.js');
+const { MockMediaDataProvider } = require('../../demo/V1.0/data/mock-media-data-provider.js');
 const fixtureDir = path.join(__dirname, 'fixtures/replay-samples');
 const codes = new Set(Object.values(c.ERROR_CODES));
 let passed = 0;

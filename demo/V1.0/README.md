@@ -23,7 +23,7 @@
 ### 方式 A：双击 file:// 直接打开（最简）
 
 ```
-demo/v6/index.html
+demo/V1.0/index.html
 ```
 
 双击即开，无需任何服务器、无需联网。
@@ -31,7 +31,7 @@ demo/v6/index.html
 ### 方式 B：本地 HTTP server
 
 ```bash
-cd demo/v6
+cd demo/V1.0
 python -m http.server 8080
 # 浏览器打开 http://localhost:8080
 ```
@@ -41,7 +41,7 @@ python -m http.server 8080
 ## 2. 目录结构
 
 ```
-demo/v6/
+demo/V1.0/
 ├── index.html            # 主页面（单文件 + vendor 分离；含诊断抽屉 + 智能参谋工作台）
 ├── README.md             # 本文件
 ├── _verify.cjs           # Golden Case 自动化校验脚本（Node.js，无网络调用）
@@ -284,7 +284,7 @@ const ai = runAiLayer(record, signals, scenario);
 $env:DEEPSEEK_API_KEY = "sk-xxxxxx"
 
 # 2. 启动本地代理（仅绑 127.0.0.1）
-cd demo/v6
+cd demo/V1.0
 node llm-proxy.mjs
 
 # 3. 浏览器打开 index.html（双击 file:// 或 python -m http.server 8080）
@@ -411,7 +411,7 @@ LLM 可选增强仍复用本地代理；对查询型回答，校验器要求输�
 6. **10 状态机演示**：在 Golden Case 抽屉里依次点「批准方案」→「我已执行」→「复盘完成」→「重新诊断」→ 可遍历 EXECUTING / WAITING / REVIEWED / 重新走诊断。
 7. **术语对照表**：抽屉最底部「📖 术语对照表（黑话翻译）」默认折叠，点击展开可看 10 个术语翻译。
 8. **技术详情**：抽屉倒数第二段「07 · 人工确认 + 技术详情」默认折叠，点击展开可看 RTAID/实验 ID/分桶/请求 ID/日志路径/configBefore/After 等。
-9. **AI 模式演示（需先启动本地代理 + 设置 DEEPSEEK_API_KEY）**：在终端 `export DEEPSEEK_API_KEY=sk-xxx`（Windows PowerShell: `$env:DEEPSEEK_API_KEY='sk-xxx'`）→ `cd demo/v6 && node llm-proxy.mjs` → 浏览器打开 index.html → 勾选右上角「AI 模式 · DeepSeek」→ 任意行点击「发起诊断」→ 抽屉先出现「模板」（灰角标），约 1-3s 后若 LLM 通过 5 项校验 + Golden Case 特判，角标自动变为「AI 生成」并 patch oneLiner / managerSummary / operationsNote / recommendations 文案；任何失败链路（代理未启动 / Key 未设置 503 / 网络断 / 校验不过 / Golden Case 不符）→ 角标保持「模板」，UI 不崩。**前端不会显示、不会要求你填写任何 Key**。
+9. **AI 模式演示（需先启动本地代理 + 设置 DEEPSEEK_API_KEY）**：在终端 `export DEEPSEEK_API_KEY=sk-xxx`（Windows PowerShell: `$env:DEEPSEEK_API_KEY='sk-xxx'`）→ `cd demo/V1.0 && node llm-proxy.mjs` → 浏览器打开 index.html → 勾选右上角「AI 模式 · DeepSeek」→ 任意行点击「发起诊断」→ 抽屉先出现「模板」（灰角标），约 1-3s 后若 LLM 通过 5 项校验 + Golden Case 特判，角标自动变为「AI 生成」并 patch oneLiner / managerSummary / operationsNote / recommendations 文案；任何失败链路（代理未启动 / Key 未设置 503 / 网络断 / 校验不过 / Golden Case 不符）→ 角标保持「模板」，UI 不崩。**前端不会显示、不会要求你填写任何 Key**。
 10. **智能参谋演示**：左侧菜单「投放管理 > RTA > 智能参谋」→ 选择 RTAID → 点击右侧推荐问题（如"这个 RTA 现在有什么异常？"）→ 模板秒回；追问"为什么预算没有跑出去？""建议调整什么，调整后观察哪些指标？""回滚条件是什么？" → 命中诊断解释回答；输入"当前 CPA、转化数和 QPS 指标是多少？""参竞率趋势从开始到最后下降了多少？""对照组和实验组对比如何？""配置变更记录是什么？" → 命中 Provider 驱动的只读查询回答，并显示 `EV-*` 证据引用；输入"直接帮我加预算" → 触发 execute_refuse 拒绝执行并引导走人工确认流程；输入"别的 RTA 呢？" → out_of_scope 说明只能回答当前 RTA；切换 RTA → 会话自动重置。
 
 ---
@@ -464,4 +464,4 @@ LLM 可选增强仍复用本地代理；对查询型回答，校验器要求输�
 
 ---
 
-_最后更新：2026-08-26 · v6 Demo 对齐版（智能参谋问答工作台 + LLM 安全版 + 数据范围 + 蓝图定位）_
+_最后更新：2026-08-26 · V1.0 Demo 对齐版（智能参谋问答工作台 + LLM 安全版 + 数据范围 + 蓝图定位）_

@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const c = require('../demo/v6/data/media-data-provider.js');
+const c = require('../demo/V1.0/data/media-data-provider.js');
 const { MediaDataProvider, ProviderError, ERROR_CODES, validateProviderRequest, createProviderMeta, validateEnvelope, CONTRACT_VERSION } = c;
 
 const RETRY = new Set([ERROR_CODES.RATE_LIMITED, ERROR_CODES.TIMEOUT, ERROR_CODES.UPSTREAM_UNAVAILABLE]);
