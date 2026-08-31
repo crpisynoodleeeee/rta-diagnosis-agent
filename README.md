@@ -2,7 +2,9 @@
 
 > 面向 RTA（实时竞价）投放优化的受控 Agentic Workflow：规则引擎确定性判定 → 场景识别 → AI 归因/解释/规划 → 人工确认执行。
 
-当前发布版本：`v0.9.1`（Public-Doc Field Contract Verification & Adapter Alignment）
+当前发布版本：`v1.0.0`（可治理诊断决策闭环）
+
+V1.0.0 已发布：可治理诊断决策闭环（Mock-Ready）——工作台先行版 + 治理闭环 + 证据面板产品化。异常诊断工作台覆盖任务队列、任务详情、数据不足/过期分支与语境化智能参谋；治理领域层提供最小权限、人工审批状态机、审计时间线、稳定性与降级可视化，以及观察与复盘闭环。全部业务数据为合成 Mock/Replay，治理核心为纯前端 Mock 领域层，未接入真实媒体 API 或生产基础设施。见 [v1.0.0 发布说明](docs/releases/v1.0.0.md)。
 
 V0.8.0 已正式发布。当前 Demo 通过 Provider Envelope 驱动只读工具，包含 MediaDataProvider 契约、MockMediaDataProvider、ReplayMediaAdapter（缓存、新鲜度和错误降级）以及只读工具白名单。智能参谋可在当前 RTA、当前合成 Mock/Replay 数据范围内查询指标、趋势、实验组/对照组、配置变更和证据引用；不接真实媒体 API。
 
@@ -60,6 +62,7 @@ AI/模板诊断输出
 
 | 文档 | 用途 |
 | --- | --- |
+| [v1.0.0 发布说明](docs/releases/v1.0.0.md) | 当前发布版本、可治理诊断决策闭环、异常诊断工作台与证据面板产品化 |
 | [v0.9.1 发布说明](docs/releases/v0.9.1.md) | 当前发布版本、公开文档字段契约核验、Adapter 对齐与 38 项专项验收 |
 | [v0.9.0 发布说明](docs/releases/v0.9.0.md) | 当前发布版本、服务端 Staging 只读接入准备、32 项专项验收 |
 | [v0.8.0 发布说明](docs/releases/v0.8.0.md) | 历史版本、Provider/Replay 只读边界和专项验收 |

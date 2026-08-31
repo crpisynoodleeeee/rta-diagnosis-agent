@@ -1,0 +1,14 @@
+const assert = require('assert');
+const g = require('./governance');
+let n=0; function ok(name, f){try{f();console.log('[PASS] '+name);n++;}catch(e){console.log('[FAIL] '+name+' - '+e.message);process.exitCode=1;}}
+const a=g.createGovernanceCore(), ca=a.tenant.createTenantContext({tenantId:'tenant-a',operator:'opt',role:'optimizer'}), cp=a.tenant.createTenantContext({tenantId:'tenant-a',operator:'app',role:'approver'});
+const base={taskId:'task-a-001',tenantId:'tenant-a',target:{rtaId:'rta-1'},suggestedActions:['pause'],diff:{before:{},after:{}},successMetrics:[{name:'successRate',target:.92,observationWindow:'24h'}],stopRollbackConditions:[{condition:'loss',action:'rollback'}],risks:[{description:'test',severity:'low'}],evidenceIds:['EV-MOCK-001']};
+let d;
+ok('AC-01 evidence traceability',()=>{d=a.actionDraft.createDraft(base);assert.equal(a.actionDraft.confirmDiagnosis(d,ca,{status:'normal'}).ok,true);assert.equal(d.diagnosisConfirmed,true);assert.equal(a.actionDraft.submitDraft(d,ca).ok,true);assert.deepEqual(d.evidenceIds,['EV-MOCK-001']);});
+ok('AC-02 safe degradation',()=>{let x=a.actionDraft.createDraft({...base,taskId:'partial'});let r=a.actionDraft.confirmDiagnosis(x,ca,{status:'partial'});assert.equal(r.result,'degraded');assert.equal(x.status,'draft');assert.equal(a.actionDraft.submitDraft(x,ca).ok,false);});
+ok('AC-03 approval and zero write API',()=>{assert.equal(a.actionDraft.approve(d,ca).error,'PERMISSION_DENIED');assert.equal(d.status,'pending_approval');assert.equal(a.actionDraft.approve(d,cp).ok,true);assert.equal(a.actionDraft.recordExecution(d,ca,{simulated:true}).ok,true);});
+ok('AC-04 permission and tenant denial',()=>{for(const action of ['confirm_diagnosis','create_draft','approve','record_execution']) assert.equal(a.roles.assertAuthorized('observer',action).error,'PERMISSION_DENIED');assert.deepEqual(a.tenant.assertTenant(ca,'tenant-b').error,'CROSS_TENANT_DENIED');});
+ok('AC-05 audit timeline/filter/isolation',()=>{let t=a.audit.getTimeline({taskId:'task-a-001',tenantId:'tenant-a'});assert(t.length>=5);assert(t.every(e=>e.context.tenantId==='tenant-a'));assert(t.every((e,i)=>i===0||new Date(t[i-1].timestamp)<=new Date(e.timestamp)));assert.equal(a.audit.getTimeline({tenantId:'tenant-b'}).length,0);});
+ok('AC-06 execution-observe-review-close',()=>{assert.equal(d.status,'execution_recorded');assert.equal(a.actionDraft.observe(d,ca).ok,true);assert.equal(a.actionDraft.review(d,ca).ok,true);assert.equal(a.actionDraft.close(d,cp).ok,true);assert.equal(d.status,'closed');for(const s of ['execution_recorded','observing','reviewed','closed']) assert(a.audit.getTimeline({taskId:d.taskId}).some(e=>e.afterStatus===s));});
+ok('AC-07 invalid transition',()=>{let x=a.actionDraft.createDraft(base);assert.equal(a.actionDraft.observe(x,ca).error,'INVALID_TRANSITION');assert.equal(x.status,'draft');});
+process.exitCode = process.exitCode || (n===7?0:1);
