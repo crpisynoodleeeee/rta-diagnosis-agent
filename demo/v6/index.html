@@ -39,6 +39,21 @@
     }
   </script>
   <style>
+    /* P3-B task-detail reading order: the DOM remains bound to existing data/actions,
+       while the presentation order keeps governance below diagnosis/evidence. */
+    .task-detail-sections { display:flex; flex-direction:column; }
+    .task-detail-sections > :nth-child(1) { order:5; }
+    .task-detail-sections > :nth-child(2) { order:5; }
+    .task-detail-sections > :nth-child(3) { order:6; }
+    .task-detail-sections > :nth-child(4) { order:0; }
+    .task-detail-sections > :nth-child(5) { order:1; }
+    .task-detail-sections > :nth-child(6) { order:2; }
+    .task-detail-sections > :nth-child(7) { order:3; }
+    .task-detail-sections > :nth-child(8) { order:4; }
+    .task-detail-sections > :nth-child(9) { order:4; }
+    .task-detail-sections > :nth-child(10) { order:8; }
+    .task-detail-sections > :nth-child(11) { order:7; }
+    .governance-trail { order:5; }
     :root { color-scheme: light; }
     body { background:#f3f6f9; color:#1f2329; -webkit-font-smoothing:antialiased; }
     .num { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; }
@@ -2705,6 +2720,22 @@ function sourceLabel(source) {
   return '';
 }
 
+function deriveEvidenceGroups(task) {
+  if (!task) return { supporting: [], excluding: [], cannotProve: [], summary: {} };
+  const q = task.dataQuality || {}, d = task.diagnosis || {}, ids = d.evidenceIds || [];
+  const statusMap = { complete: '数据完整', partial: '数据部分缺失', stale: '数据已过期', unavailable: '数据不可用', conflict: '数据存在冲突' };
+  const degraded = ['partial', 'stale', 'unavailable', 'conflict'].includes(q.status) || task.status === 'insufficient' || task.status === 'stale';
+  const meta = id => ({ evidenceId: id || '暂无编号', source: (q.source || []).join('、') || '合成回放', updatedAt: q.updatedAt || task.discoveredAt || '当前' });
+  const supporting = [];
+  if (!degraded) (d.matchedRules || []).filter(r => r.result === 'matched').forEach((r, i) => { const o = task.observation || {}; const metric = o.baseline !== undefined && o.value !== undefined ? `观测值：${o.metric || '指标'} ${o.value}；基线 ${o.baseline}；变化 ${(o.changeRate * 100).toFixed(0)}%` : (o.description || '已获得相关指标观测'); supporting.push({ title: r.name || '规则命中', explanation: r.explanation || '该规则与当前判断一致。', metric, ...meta(ids[i] || ids[0]), technical: { ruleId: r.ruleId, result: r.result, metricRefs: [o.metric].filter(Boolean), rawObservation: o } }); });
+  if (!degraded && !supporting.length && task.observation && ids.length) supporting.push({ title: '核心指标处于可观察范围', explanation: task.observation.description || '当前观测支持继续保持现有判断。', metric: `${task.observation.metric || '指标'}：${task.observation.value || '已记录'}`, ...meta(ids[0]), technical: { rawObservation: task.observation } });
+  const excluding = degraded ? [] : (d.excludedCauses || []).map((e, i) => ({ title: `已排除：${e.cause}`, explanation: e.reason || '现有证据未支持该原因。', metric: '排除理由已记录', ...meta((e.evidenceIds || [])[0] || ids[i]), technical: e }));
+  const cannotProve = (d.limitations || []).map((x, i) => ({ title: '当前诊断边界', explanation: x, metric: '', ...meta(ids[i]), technical: { limitation: x } }));
+  if ((q.missingFields || []).length) cannotProve.push({ title: '尚缺少的信息', explanation: `仍缺少：${q.missingFields.join('、')}`, metric: `影响的判断：${(q.affectedJudgments || []).join('、') || '部分诊断结论'}`, ...meta(ids[0]), technical: { missingFields: q.missingFields, affectedJudgments: q.affectedJudgments || [] } });
+  if (degraded && !cannotProve.length) cannotProve.push({ title: '当前暂不能形成可靠判断', explanation: d.conclusion || '请补齐数据后重新诊断。', metric: '', ...meta(ids[0]), technical: { status: q.status, freshness: q.freshness } });
+  return { supporting, excluding, cannotProve, summary: { completeness: q.completeness, status: statusMap[q.status] || '数据状态待确认', source: (q.source || []).join('、') || '合成回放', updatedAt: q.updatedAt || task.discoveredAt || '当前', rawStatus: q.status, missingCount: (q.missingFields || []).length } };
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
  * 7. 状态机（10 状态）
  *    - 未发起 / 读取中 / 诊断中 / 诊断完成 / 数据不足 / 待人工确认
@@ -2761,10 +2792,20 @@ const app = createApp({
     const governanceAuditOpen = ref(false);
     const roleLabels = { observer: '观察者', optimizer: '优化师', approver: '审批人' };
     const governanceStatusLabels = { draft: '草稿', pending_approval: '待审批', approved: '已批准', rejected: '已拒绝', execution_recorded: '已记录执行', observing: '观察中', reviewed: '已复盘', closed: '已关闭' };
-    const governanceDegradationLabels = { normal: '正常', stale: '数据过期', partial: '数据部分缺失', timeout: '数据超时', permission_denied: '权限不足', cross_tenant_denied: '跨租户拒绝', insufficient: '数据不足' };
+    const governanceDegradationLabels = { normal: '正常', complete: '数据完整', stale: '数据过期', partial: '数据部分缺失', timeout: '数据超时', permission_denied: '权限不足', cross_tenant_denied: '跨租户拒绝', insufficient: '数据不足' };
     const governanceDegradationAdvice = { stale: '请刷新数据后再形成处置草稿。', partial: '请补齐缺失字段后再形成处置草稿。', timeout: '请稍后重试并确认数据源可用。', insufficient: '请补齐数据后重新诊断。' };
-    const governanceQualityStatus = computed(() => selectedTask.value && ((selectedTask.value.dataQuality && selectedTask.value.dataQuality.status) || 'normal'));
-    const governanceIsDegraded = computed(() => governanceQualityStatus.value !== 'normal');
+    const governanceQualityStatus = computed(() => selectedTask.value && ((selectedTask.value.dataQuality && selectedTask.value.dataQuality.status) || 'complete'));
+    const governanceDomainQualityStatus = computed(() => governanceQualityStatus.value === 'complete' ? 'normal' : governanceQualityStatus.value);
+    const governanceTrail = computed(() => {
+      const status = governanceDraft.value && governanceDraft.value.status;
+      const nodes = [
+        ['draft', '草稿'], ['pending_approval', '待审批'], ['approved', '已批准'],
+        ['execution_recorded', '模拟执行'], ['observing', '观察中'], ['reviewed', '已复盘'], ['closed', '已关闭']
+      ];
+      const index = nodes.findIndex(n => n[0] === status);
+      return nodes.map((n, i) => ({ key: n[0], label: n[1], current: n[0] === status, complete: index >= 0 && i < index, pending: index < 0 || i > index }));
+    });
+    const governanceIsDegraded = computed(() => governanceDomainQualityStatus.value !== 'normal');
     const governanceTimeline = computed(() => selectedTask.value ? v10.audit.getTimeline({ taskId: selectedTask.value.id }) : []);
     function governancePermission(action) { return v10.roles.checkPermission(currentRole.value, action).allow; }
     function governanceButtonTitle(action) { return governancePermission(action) ? '' : '当前角色无权执行此操作'; }
@@ -2789,7 +2830,7 @@ const app = createApp({
         return;
       }
       if (!governanceDraft.value) { governanceMessage.value = '请先创建处置草稿'; return; }
-      if (action === 'confirm_diagnosis') result = v10.actionDraft.confirmDiagnosis(governanceDraft.value, ctx, { status: governanceQualityStatus.value });
+      if (action === 'confirm_diagnosis') result = v10.actionDraft.confirmDiagnosis(governanceDraft.value, ctx, { status: governanceDomainQualityStatus.value });
       if (action === 'submit_draft') result = v10.actionDraft.submitDraft(governanceDraft.value, ctx);
       if (action === 'approve') result = v10.actionDraft.approve(governanceDraft.value, ctx);
       if (action === 'reject') result = v10.actionDraft.reject(governanceDraft.value, ctx, '审批人拒绝');
@@ -2851,8 +2892,14 @@ const app = createApp({
     const p5FilterOptions = ['待关注', '全部任务', '数据不足', '已查看', '待审批', '观察中'];
     const p5Counts = computed(() => ({ attention: p5Tasks.value.filter(t => t.status === 'attention').length, high: p5Tasks.value.filter(t => t.priority === 'high').length, insufficient: p5Tasks.value.filter(t => t.status === 'insufficient').length, viewed: p5Tasks.value.filter(t => t.status === 'viewed').length }));
     const p5VisibleTasks = computed(() => { const f = p5Tasks.value.filter(t => p5Filter.value === '全部任务' || (p5Filter.value === '待关注' && t.status === 'attention') || (p5Filter.value === '数据不足' && t.status === 'insufficient') || (p5Filter.value === '已查看' && t.status === 'viewed') || (p5Filter.value === '待审批' && (v10.actionDraft.getDraft(t.id) || {}).status === 'pending_approval') || (p5Filter.value === '观察中' && (v10.actionDraft.getDraft(t.id) || {}).status === 'observing')); const rank = t => t.status === 'viewed' ? 4 : t.status === 'insufficient' || t.status === 'stale' ? 2 : t.priority === 'high' ? 0 : t.priority === 'medium' ? 1 : 3; return f.slice().sort((a,b) => rank(a)-rank(b) || a.id.localeCompare(b.id)); });
-    function onSelectTask(task) { selectedTaskId.value = task.id; currentView.value = 'taskDetail'; selectedMenuId.value = 'tasks'; }
-    function goBackToTasks() { currentView.value = 'tasks'; selectedMenuId.value = 'tasks'; selectedTaskId.value = null; }
+    function onSelectTask(task) {
+      selectedTaskId.value = task.id;
+      governanceDraft.value = v10.actionDraft.getDraft(task.id);
+      governanceMessage.value = '';
+      currentView.value = 'taskDetail';
+      selectedMenuId.value = 'tasks';
+    }
+    function goBackToTasks() { currentView.value = 'tasks'; selectedMenuId.value = 'tasks'; selectedTaskId.value = null; governanceDraft.value = null; governanceMessage.value = ''; }
     const taskChatSessions = reactive(new Map());
     const taskAssistantInput = ref('');
     const taskAssistantListEl = ref(null);
@@ -2869,15 +2916,35 @@ const app = createApp({
       if (task && task.status === 'insufficient' && !/(数据质量|缺失字段|更新时间|诊断限制|证据不足)/.test(q)) return '当前任务证据不足，请聚焦数据质量、缺失字段、更新时间或诊断限制；请先查看缺失字段。';
       return '';
     }
+    // P3-C task-scoped structured answer. Kept separate from standalone assistant functions.
+    function buildTaskAssistantAnswer(question, task) {
+      if (!task) return { type: 'degraded', conclusion: '当前没有选中的诊断任务', keyMetrics: [], nextAction: null, evidenceIds: [], limitations: ['请先打开一个诊断任务'] };
+      if (['insufficient', 'stale'].includes(task.status)) {
+        const missing = (task.dataQuality && task.dataQuality.missingFields || []).join('、') || '有效转化数和归因完成率';
+        return { type: 'degraded', conclusion: '暂时无法判断 CPA 是否异常', keyMetrics: [], nextAction: { type: task.nextAction && task.nextAction.type === 'wait_attribution' ? 'wait_attribution' : 'view_missing_fields', label: task.nextAction && task.nextAction.type === 'wait_attribution' ? '等待归因数据' : '查看缺失字段' }, evidenceIds: [], limitations: ['原因：缺少' + missing], question: question || '' };
+      }
+      const d = task.diagnosis || {};
+      return { type: 'diagnosis', conclusion: d.conclusion || '当前暂无明确结论', keyMetrics: task.observation && task.observation.metric ? [{ name: task.observation.metric, value: task.observation.value }] : [], nextAction: task.nextAction || null, evidenceIds: d.evidenceIds || [], limitations: d.limitations || [], question: question || '' };
+    }
+    function taskAssistantAction(action) {
+      if (action === 'wait_attribution') return '等待归因完成后再诊断';
+      if (action === 'view_missing_fields') { const el = document.getElementById('task-evidence-quality'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+      if (action === 'switch_rta') goBackToTasks();
+      if (action === 'view_diagnosis') { const el = document.getElementById('task-evidence-quality'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    }
     async function askTaskAssistant(question) {
       const q = (question || '').trim(), task = selectedTask.value;
       if (!q || !task || taskIsAsking.value) return;
       taskIsAsking.value = true;
       const sess = getOrCreateTaskSession(task); sess.messages.push({ role: 'user', text: q, ts: nowStr() }); taskAssistantInput.value = '';
       const blocked = taskQuestionBlocked(q, task);
-      if (blocked) sess.messages.push({ role: 'assistant', text: blocked, ts: nowStr() });
-      else if (task.status === 'insufficient') sess.messages.push({ role: 'assistant', text: '当前任务不生成根因结论或处置草稿。可确认的范围是：缺少字段为 ' + (task.dataQuality.missingFields || []).join('、') + '；受影响判断为 ' + (task.dataQuality.affectedJudgments || []).join('、') + '。', ts: nowStr() });
-      else sess.messages.push({ role: 'assistant', text: '当前判断为“疑似/待确认”：' + (task.diagnosis.conclusion || '暂无结论') + '。依据证据 ' + (task.diagnosis.evidenceIds || []).join('、') + '，数据质量为 ' + task.dataQuality.status + '。', ts: nowStr() });
+      if (blocked) {
+        const structured = { type: 'blocked', conclusion: '当前问题不在可回答范围内', keyMetrics: [], nextAction: { type: 'view_diagnosis', label: '查看当前诊断' }, evidenceIds: [], limitations: ['当前可帮你分析：所选 RTA 的诊断、指标、趋势和证据。'] };
+        sess.messages.push({ role: 'assistant', text: structured.conclusion + '。当前可帮你分析：所选 RTA 的诊断、指标、趋势和证据。', structured, ts: nowStr() });
+      } else {
+        const structured = buildTaskAssistantAnswer(q, task);
+        sess.messages.push({ role: 'assistant', text: structured.conclusion, structured, ts: nowStr() });
+      }
       taskIsAsking.value = false; await nextTick(); if (taskAssistantListEl.value) taskAssistantListEl.value.scrollTop = taskAssistantListEl.value.scrollHeight;
     }
     const assistantRtaId = ref(listDataRecords()[0].rtaId);
@@ -2889,6 +2956,9 @@ const app = createApp({
     const MAX_TURNS = 8; // 最近 8 轮（1 轮 = 1 条 user + 1 条 assistant）
 
     const assistantRta = computed(() => getDataRecord(assistantRtaId.value) || listDataRecords()[0]);
+    function assistantAnswerSegments(text) { return String(text || '').split(/\n+/).map(s => s.trim()).filter(Boolean); }
+    function standaloneAssistantAction(action) { if (action === 'view_missing_fields' || action === 'view_diagnosis') window.alert('当前无关联诊断任务'); }
+    function assistantPrimaryMetric(record) { const core = record && record.coreMetrics || {}, usage = Number(core.qpsUsageRate); if (Number.isFinite(usage)) return `QPS 使用率 ${(usage * 100).toFixed(1)}%`; const hit = record && record.usageMetrics && Number(record.usageMetrics.hitRate); if (Number.isFinite(hit)) return `命中率 ${(hit * 100).toFixed(1)}%`; return '暂无可用关键指标'; }
     const currentSession = computed(() => getOrCreateSession(assistantRtaId.value));
 
     // 第一版固定 4 条推荐问题（进入诊断结果后可追问 5-6 条）
@@ -3217,9 +3287,9 @@ const app = createApp({
     return {
       // 侧边栏菜单
       navGroups, selectedMenuId, currentView, selectedTaskId,
-      p5Tasks, p5Filter, p5FilterOptions, p5Counts, p5VisibleTasks, onSelectTask, selectedTask, goBackToTasks, DiagnosisTaskModel,
+      p5Tasks, p5Filter, p5FilterOptions, p5Counts, p5VisibleTasks, onSelectTask, selectedTask, goBackToTasks, DiagnosisTaskModel, deriveEvidenceGroups,
       v10, currentRole, roleLabels, governanceDraft, governanceMessage, governanceAuditOpen, governanceStatusLabels,
-      governanceQualityStatus, governanceIsDegraded, governanceDegradationLabels, governanceDegradationAdvice, governanceTimeline,
+      governanceQualityStatus, governanceDomainQualityStatus, governanceIsDegraded, governanceDegradationLabels, governanceDegradationAdvice, governanceTimeline, governanceTrail,
       governancePermission, governanceButtonTitle, governanceAction,
       taskAssistantInput, taskAssistantListEl, taskIsAsking, currentTaskSession, askTaskAssistant,
       onMenuSelect, goBackToList,
@@ -3229,6 +3299,7 @@ const app = createApp({
       assistantQuestions, assistantFollowUpQuestions,
       askAssistant, askRecommended, selectAssistantRta,
       sourceLabel,
+      assistantAnswerSegments, standaloneAssistantAction, assistantPrimaryMetric, taskAssistantAction,
       onAssistantKeyUp, onAssistantKeyDown, onCompositionStart, onCompositionEnd,
       // 列表
       rtaList, searchKw, filterMedia, filterStatus, filterTag, filteredList, qpsSummary,
@@ -3264,7 +3335,6 @@ const app = createApp({
 
     <!-- 主区 -->
     <main class="main-workspace flex-1 min-w-0 p-5">
-
       <template v-if="currentView === 'tasks'">
       <div class="page-heading mb-4"><div class="text-[12px] text-ink-400">诊断工作台</div><h1 class="text-[20px] font-semibold text-ink-800 mt-0.5">诊断工作台 · 任务队列</h1><p class="text-[12px] text-ink-500 mt-1">数据为合成 Mock 数据</p></div>
 <div class="grid grid-cols-6 gap-3 mb-4"><div v-for="item in [{key:'attention',label:'待关注'},{key:'high',label:'高优先级'},{key:'insufficient',label:'数据不足'},{key:'viewed',label:'已查看'}]" :key="item.key" class="bg-white rounded-md p-3 border border-ink-100"><div class="text-[12px] text-ink-500">{{ item.label }}</div><div class="num text-[24px] font-semibold mt-1 text-red-600">{{ p5Counts[item.key] }}</div></div><div class="bg-white rounded-md p-3 border border-ink-100"><div class="text-[12px] text-ink-500">待审批</div><div class="num text-[24px] font-semibold mt-1 text-amber-600">{{ v10.actionDraft.countByStatus().pending_approval }}</div></div><div class="bg-white rounded-md p-3 border border-ink-100"><div class="text-[12px] text-ink-500">观察中</div><div class="num text-[24px] font-semibold mt-1 text-blue-600">{{ v10.actionDraft.countByStatus().observing }}</div></div></div>
@@ -3272,12 +3342,20 @@ const app = createApp({
       <div class="bg-white rounded-md border border-ink-100 overflow-hidden"><table class="w-full text-left text-[12px]"><thead class="bg-ink-50 text-ink-500"><tr><th class="px-3 py-2">优先级</th><th class="px-3 py-2">任务标题</th><th class="px-3 py-2">RTA · 媒体 · 项目</th><th class="px-3 py-2">场景</th><th class="px-3 py-2">数据质量</th><th class="px-3 py-2">状态</th><th class="px-3 py-2">发现时间</th><th class="px-3 py-2">下一步</th></tr></thead><tbody class="divide-y divide-ink-100"><tr v-for="task in p5VisibleTasks" :key="task.id" @click="onSelectTask(task)" class="hover:bg-brand-50 cursor-pointer"><td class="px-3 py-3">{{ DiagnosisTaskModel.LABELS.priority[task.priority].label }}</td><td class="px-3 py-3 font-medium text-ink-800">{{ task.title }}</td><td class="px-3 py-3">{{ task.target.rtaName }} · {{ task.target.media }} · {{ task.target.project }}</td><td class="px-3 py-3">{{ task.scene.code }} · {{ task.scene.name }}</td><td class="px-3 py-3">{{ DiagnosisTaskModel.LABELS.dataQuality[task.dataQuality.status].label }}<span v-if="task.dataQuality.missingFields.length" class="ml-1 text-amber-600">缺 {{ task.dataQuality.missingFields.length }} 字段</span></td><td class="px-3 py-3">{{ DiagnosisTaskModel.LABELS.status[task.status].label }}</td><td class="px-3 py-3">{{ task.discoveredAt }}</td><td class="px-3 py-3"><button class="text-brand-600 hover:underline" @click.stop="onSelectTask(task)">{{ task.nextAction.label }}</button></td></tr></tbody></table></div>
       </template>
       <template v-else-if="currentView === 'taskDetail'">
-      <div v-if="selectedTask" class="space-y-4">
+      <div v-if="selectedTask" class="task-detail-sections space-y-4">
+        <div class="governance-trail bg-white rounded-md border border-brand-100 p-3 text-[11px]">
+          <div class="font-semibold text-[12px] mb-2">治理状态轨迹</div>
+          <div class="flex flex-wrap items-center gap-1">
+            <template v-for="(node, i) in governanceTrail" :key="node.key"><span class="px-2 py-1 rounded" :class="node.current ? 'bg-brand-500 text-white font-semibold' : (node.complete ? 'bg-emerald-50 text-emerald-700' : 'bg-ink-50 text-ink-400')">{{ node.label }}</span><span v-if="i < governanceTrail.length - 1" class="text-ink-300">→</span></template>
+            <span v-if="governanceDraft && governanceDraft.status === 'rejected'" class="px-2 py-1 rounded bg-rose-100 text-rose-700 font-semibold">已拒绝</span>
+          </div>
+          <div v-if="governanceDraft && governanceDraft.status === 'rejected'" class="mt-2 text-rose-700">可重新创建草稿</div>
+        </div>
         <div class="bg-white rounded-md border border-brand-200 p-5">
           <div class="flex flex-wrap items-center justify-between gap-3"><div><h2 class="text-[16px] font-semibold">V1.0 治理操作</h2><p class="text-[11px] text-ink-400 mt-1">V1.0 可治理诊断闭环（Mock-Ready）· 数据均为合成 Mock，不含真实媒体写接口，人工审批为模拟流程</p></div><label class="text-[12px]">当前角色 <select v-model="currentRole" class="ml-2 border rounded px-2 py-1"><option value="observer">观察者</option><option value="optimizer">优化师</option><option value="approver">审批人</option></select></label></div>
           <div class="mt-3 flex flex-wrap gap-2"><span class="badge" :class="governanceQualityStatus === 'normal' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'">数据质量：{{ governanceDegradationLabels[governanceQualityStatus] || governanceQualityStatus }}</span><span v-if="governanceDraft" class="badge bg-brand-50 text-brand-700">流程：{{ governanceStatusLabels[governanceDraft.status] }}</span><span v-if="governanceMessage" class="text-[12px] text-amber-700">{{ governanceMessage }}</span></div>
           <div v-if="governanceIsDegraded" class="mt-3 bg-amber-50 border border-amber-200 rounded p-3 text-[12px]"><b>暂不形成确定结论</b> · {{ governanceDegradationAdvice[governanceQualityStatus] || selectedTask.nextAction.description }}</div>
-          <div class="mt-4 flex flex-wrap gap-2"><button v-if="!governanceDraft && !governanceIsDegraded" @click="governanceAction('create_draft')" :disabled="!governancePermission('create_draft')" :title="governanceButtonTitle('create_draft')" class="border border-brand-300 text-brand-700 rounded px-3 py-1.5 text-[12px] disabled:opacity-40">创建处置草稿</button><button v-if="governanceDraft && !governanceDraft.diagnosisConfirmed" @click="governanceAction('confirm_diagnosis')" :disabled="!governancePermission('confirm_diagnosis')" :title="governanceButtonTitle('confirm_diagnosis')" class="border border-emerald-300 text-emerald-700 rounded px-3 py-1.5 text-[12px] disabled:opacity-40">确认诊断</button><button v-if="governanceDraft && governanceDraft.status === 'draft' && governanceDraft.diagnosisConfirmed" @click="governanceAction('submit_draft')" :disabled="!governancePermission('submit_draft')" :title="governanceButtonTitle('submit_draft')" class="bg-brand-500 text-white rounded px-3 py-1.5 text-[12px] disabled:opacity-40">提交审批</button><button v-if="governanceDraft && governanceDraft.status === 'pending_approval'" @click="governanceAction('approve')" :disabled="!governancePermission('approve')" :title="governanceButtonTitle('approve')" class="bg-emerald-600 text-white rounded px-3 py-1.5 text-[12px] disabled:opacity-40">批准</button><button v-if="governanceDraft && governanceDraft.status === 'pending_approval'" @click="governanceAction('reject')" :disabled="!governancePermission('reject')" :title="governanceButtonTitle('reject')" class="border border-orange-300 text-orange-700 rounded px-3 py-1.5 text-[12px] disabled:opacity-40">拒绝</button><button v-if="governanceDraft && governanceDraft.status === 'approved'" @click="governanceAction('record_execution')" :disabled="!governancePermission('record_execution')" :title="governanceButtonTitle('record_execution')" class="bg-brand-500 text-white rounded px-3 py-1.5 text-[12px] disabled:opacity-40">记录执行（模拟）</button><button v-if="governanceDraft && governanceDraft.status === 'execution_recorded'" @click="governanceAction('observe')" class="border rounded px-3 py-1.5 text-[12px]">观察</button><button v-if="governanceDraft && governanceDraft.status === 'observing'" @click="governanceAction('review')" class="border rounded px-3 py-1.5 text-[12px]">复盘</button><button v-if="governanceDraft && governanceDraft.status === 'reviewed'" @click="governanceAction('close')" class="border rounded px-3 py-1.5 text-[12px]">关闭</button></div>
+          <div class="mt-4 flex flex-wrap gap-2"><button v-if="(!governanceDraft || governanceDraft.status === 'rejected') && !governanceIsDegraded" @click="governanceAction('create_draft')" :disabled="!governancePermission('create_draft')" :title="governanceButtonTitle('create_draft')" class="border border-brand-300 text-brand-700 rounded px-3 py-1.5 text-[12px] disabled:opacity-40">{{ governanceDraft && governanceDraft.status === 'rejected' ? '重新创建草稿' : '创建处置草稿' }}</button><button v-if="governanceDraft && governanceDraft.status === 'draft' && !governanceDraft.diagnosisConfirmed" @click="governanceAction('confirm_diagnosis')" :disabled="!governancePermission('confirm_diagnosis')" :title="governanceButtonTitle('confirm_diagnosis')" class="border border-emerald-300 text-emerald-700 rounded px-3 py-1.5 text-[12px] disabled:opacity-40">确认诊断</button><button v-if="governanceDraft && governanceDraft.status === 'draft' && governanceDraft.diagnosisConfirmed" @click="governanceAction('submit_draft')" :disabled="!governancePermission('submit_draft')" :title="governanceButtonTitle('submit_draft')" class="bg-brand-500 text-white rounded px-3 py-1.5 text-[12px] disabled:opacity-40">提交审批</button><button v-if="governanceDraft && governanceDraft.status === 'pending_approval'" @click="governanceAction('approve')" :disabled="!governancePermission('approve')" :title="governanceButtonTitle('approve')" class="bg-emerald-600 text-white rounded px-3 py-1.5 text-[12px] disabled:opacity-40">批准</button><button v-if="governanceDraft && governanceDraft.status === 'pending_approval'" @click="governanceAction('reject')" :disabled="!governancePermission('reject')" :title="governanceButtonTitle('reject')" class="border border-orange-300 text-orange-700 rounded px-3 py-1.5 text-[12px] disabled:opacity-40">拒绝</button><button v-if="governanceDraft && governanceDraft.status === 'approved'" @click="governanceAction('record_execution')" :disabled="!governancePermission('record_execution')" :title="governanceButtonTitle('record_execution')" class="bg-brand-500 text-white rounded px-3 py-1.5 text-[12px] disabled:opacity-40">记录执行（模拟）</button><button v-if="governanceDraft && governanceDraft.status === 'execution_recorded'" @click="governanceAction('observe')" class="border rounded px-3 py-1.5 text-[12px]">观察</button><button v-if="governanceDraft && governanceDraft.status === 'observing'" @click="governanceAction('review')" class="border rounded px-3 py-1.5 text-[12px]">复盘</button><button v-if="governanceDraft && governanceDraft.status === 'reviewed'" @click="governanceAction('close')" class="border rounded px-3 py-1.5 text-[12px]">关闭</button></div>
         </div>
         <details class="bg-white rounded-md border border-ink-100 p-4"><summary class="cursor-pointer font-semibold text-[14px]">审计时间线（{{ governanceTimeline.length }}）</summary><div class="mt-3 space-y-2 text-[11px]"><div v-for="(ev,i) in governanceTimeline" :key="i" class="border-t pt-2"><span class="num text-ink-400">{{ ev.timestamp }}</span> · <b>{{ ev.action }}</b> · {{ ev.operator }} / {{ roleLabels[ev.role] || ev.role }} · {{ ev.beforeStatus || '-' }}→{{ ev.afterStatus || '-' }} <span class="badge ml-1" :class="ev.result === 'success' ? 'bg-emerald-50 text-emerald-700' : (ev.result === 'denied' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700')">{{ ev.result }}</span></div><div v-if="!governanceTimeline.length" class="text-ink-400">暂无治理事件</div></div></details>
         <div class="flex items-center justify-between"><button @click="goBackToTasks" class="text-[13px] text-brand-600 hover:underline">← 返回任务列表</button><span class="text-[12px] text-ink-400">任务详情 · {{ selectedTask.id }}</span></div>
@@ -3285,10 +3363,10 @@ const app = createApp({
         <div class="bg-white rounded-md border border-ink-100 p-5"><h1 class="text-[22px] font-semibold text-ink-800">{{ selectedTask.title }}</h1><p class="mt-2 text-[13px] text-ink-600">{{ selectedTask.observation.description }}</p><div v-if="selectedTask.status !== 'insufficient'" class="mt-3 p-3 rounded bg-brand-50 text-[13px]"><b>当前判断（疑似 / 待确认）：</b>{{ selectedTask.diagnosis.conclusion }}</div></div>
         <div v-if="selectedTask.status === 'insufficient'" class="bg-amber-50 border border-amber-200 rounded-md p-5"><h2 class="text-[16px] font-semibold">当前证据不足</h2><div class="mt-3 text-[13px]">缺少字段：<span v-for="f in selectedTask.dataQuality.missingFields" :key="f" class="badge bg-white text-amber-700 mr-1">{{ f }}</span><br class="mt-2">受影响判断：{{ (selectedTask.dataQuality.affectedJudgments || []).join('、') }}<br>下一步：{{ selectedTask.nextAction.label }} · {{ selectedTask.nextAction.description }}<br><b>不生成根因结论与处置草稿（数据不足时不补全缺失事实）</b><br><span class="badge bg-ink-100 text-ink-500 mt-2">置信度：none</span></div></div>
         <div v-else class="bg-white rounded-md border border-ink-100 p-5"><h2 class="text-[16px] font-semibold">诊断推理链</h2><div class="mt-3 grid grid-cols-5 gap-2 text-[12px]"><div class="border rounded p-3"><b>① 观测</b><p>{{ selectedTask.observation.metric }}：{{ selectedTask.observation.value }}<br>{{ selectedTask.observation.description }}</p></div><div class="border rounded p-3"><b>② 规则</b><p v-for="r in selectedTask.diagnosis.matchedRules" :key="r.ruleId">{{ r.ruleId }} · {{ r.name }}<br>{{ r.explanation }}</p></div><div class="border rounded p-3"><b>③ 排除</b><p v-for="e in selectedTask.diagnosis.excludedCauses" :key="e.cause">{{ e.cause }}：{{ e.reason }}<br>证据 {{ (e.evidenceIds || []).join('、') }}</p></div><div class="border rounded p-3"><b>④ 场景</b><p>{{ selectedTask.scene.code }} · {{ selectedTask.scene.name }}</p></div><div class="border rounded p-3"><b>⑤ 判断</b><p>{{ selectedTask.diagnosis.conclusion }}</p><span class="badge bg-amber-50 text-amber-700">置信度：{{ selectedTask.diagnosis.confidence }}</span><p v-if="selectedTask.status === 'stale'" class="text-yellow-700">最近一次有效数据已超过 freshness 窗口，不能代表当前投放状态</p></div></div></div>
-        <div class="bg-white rounded-md border border-ink-100 p-5"><h2 class="text-[16px] font-semibold">证据与数据质量</h2><details v-for="id in selectedTask.diagnosis.evidenceIds" :key="id" class="mt-2 border rounded p-3"><summary class="cursor-pointer">{{ id }}</summary><div class="text-[12px] mt-2">来源：{{ (selectedTask.dataQuality.source || []).join('、') }} · 更新时间：{{ selectedTask.dataQuality.updatedAt || '当前' }} · 新鲜度：{{ selectedTask.dataQuality.freshness }}<br>缺失字段：{{ (selectedTask.dataQuality.missingFields || []).join('、') || '无' }} · 受影响判断：{{ (selectedTask.dataQuality.affectedJudgments || []).join('、') || '无' }}</div></details><div class="mt-3 bg-ink-50 p-3 text-[12px]">数据质量：{{ selectedTask.dataQuality.status }} · 完整度：{{ (selectedTask.dataQuality.completeness * 100).toFixed(0) }}% · 新鲜度：{{ selectedTask.dataQuality.freshness }}<span v-if="selectedTask.dataQuality.updatedAt"> · 最后有效数据：{{ selectedTask.dataQuality.updatedAt }}</span></div></div>
+        <div id="task-evidence-quality" class="bg-white rounded-md border border-ink-100 p-5"><h2 class="text-[16px] font-semibold">证据与数据质量</h2><div class="mt-3 flex flex-wrap gap-2 text-[12px]"><span class="badge bg-ink-50">证据完整度：{{ Math.round((deriveEvidenceGroups(selectedTask).summary.completeness || 0) * 5) }}/5</span><span class="badge bg-ink-50">数据状态：{{ deriveEvidenceGroups(selectedTask).summary.status }}</span><span>数据来源：{{ deriveEvidenceGroups(selectedTask).summary.source }}</span><span>最后更新时间：{{ deriveEvidenceGroups(selectedTask).summary.updatedAt }}</span></div><div v-if="deriveEvidenceGroups(selectedTask).summary.rawStatus !== 'complete'" class="mt-3 bg-amber-50 border border-amber-200 rounded p-3 text-[12px]"><span v-if="deriveEvidenceGroups(selectedTask).summary.rawStatus === 'stale'">数据已过期：最近一次有效数据不能代表当前投放状态。</span><span v-else>当前证据不足：请结合尚缺少的信息谨慎判断。</span></div><div v-for="group in [{key:'supporting',title:'支持当前判断',empty:'当前未识别到明确支持证据'},{key:'excluding',title:'排除其他原因',empty:'当前未识别到明确排除原因'},{key:'cannotProve',title:'当前不能证明',empty:'当前未识别到明确限制'}]" :key="group.key" class="mt-4"><h3 class="text-[13px] font-semibold">{{ group.title }}</h3><div v-if="!deriveEvidenceGroups(selectedTask)[group.key].length" class="mt-2 text-[12px] text-ink-400">{{ group.empty }}</div><div v-for="(card,i) in deriveEvidenceGroups(selectedTask)[group.key]" :key="card.title+i" class="mt-2 border rounded p-3"><div class="font-medium text-[13px]">{{ card.title }}</div><div class="mt-1 text-[12px] text-ink-600">{{ card.explanation }}</div><div v-if="card.metric" class="mt-1 text-[12px]">{{ card.metric }}</div><div class="mt-2 text-[11px] text-ink-400">证据编号：{{ card.evidenceId }} · 来源：{{ card.source }} · 更新时间：{{ card.updatedAt }}</div><details class="mt-2 text-[11px] text-ink-500"><summary class="cursor-pointer">查看技术详情</summary><pre>{{ JSON.stringify(card.technical, null, 2) }}</pre></details></div></div></div>
         <div class="bg-white rounded-md border border-ink-100 p-4"><b>下一步动作：{{ selectedTask.nextAction.label }}</b> · {{ selectedTask.nextAction.description }}</div>
-        <details class="bg-white rounded-md border border-ink-100 p-4"><summary class="cursor-pointer font-semibold">既有演示能力（诊断报告 / 人工确认）</summary><p class="mt-2 text-[11px] text-ink-400">以下为既有演示能力，P5 不包含正式审批与执行闭环（V1.0 实现）</p><button @click="openDiagnosis(selectedTask.target.rtaId)" class="mt-3 bg-white border border-brand-300 text-brand-600 px-3 py-1.5 rounded text-[13px]">打开诊断报告（演示）</button></details>
-        <div class="bg-white rounded-md border border-ink-100 p-5"><h2 class="text-[16px] font-semibold">任务内语境化智能参谋</h2><div ref="taskAssistantListEl" class="h-40 overflow-auto mt-3 space-y-2 text-[12px]"><div v-for="(m,i) in currentTaskSession.messages" :key="i" :class="m.role === 'user' ? 'text-right' : ''"><span class="inline-block rounded px-3 py-2" :class="m.role === 'user' ? 'bg-brand-50' : 'bg-ink-50'">{{ m.text }}</span></div></div><div class="flex gap-2 mt-3"><input v-model="taskAssistantInput" @keyup.enter="askTaskAssistant(taskAssistantInput)" class="flex-1 border rounded px-3 py-2 text-[13px]" placeholder="围绕当前任务、证据与数据质量提问"><button @click="askTaskAssistant(taskAssistantInput)" class="bg-brand-500 text-white rounded px-4">发送</button></div><div class="mt-3 flex flex-wrap gap-2"><button v-for="q in ((selectedTask.assistantContext.suggestedQuestions || []).length ? selectedTask.assistantContext.suggestedQuestions : assistantQuestions)" :key="q" @click="askTaskAssistant(q)" class="text-[11px] text-brand-600 border rounded px-2 py-1">{{ q }}</button></div></div>
+        <details class="bg-white rounded-md border border-ink-100 p-4"><summary class="cursor-pointer font-semibold">既有演示能力（诊断报告 / 人工确认）</summary><p class="mt-2 text-[11px] text-ink-400">既有诊断报告演示，与下方 V1.0 Mock-Ready 治理流程相互独立。</p><button @click="openDiagnosis(selectedTask.target.rtaId)" class="mt-3 bg-white border border-brand-300 text-brand-600 px-3 py-1.5 rounded text-[13px]">打开诊断报告（演示）</button></details>
+        <div class="bg-white rounded-md border border-ink-100 p-5"><h2 class="text-[16px] font-semibold">任务内语境化智能参谋</h2><div ref="taskAssistantListEl" class="h-40 overflow-auto mt-3 space-y-2 text-[12px]"><template v-for="(m,i) in currentTaskSession.messages" :key="i"><div v-if="m.structured" class="bg-ink-50 rounded px-3 py-2"><div><b>结论</b>：{{ m.structured.conclusion }}</div><div v-if="(m.structured.keyMetrics || []).length" class="mt-1">关键指标：<span v-for="metric in m.structured.keyMetrics" :key="metric.name" class="mr-2">{{ metric.name }}：{{ metric.value }}</span></div><div v-if="m.structured.nextAction" class="mt-1">下一步：{{ m.structured.nextAction.label }} <button v-if="m.structured.nextAction.type" @click="taskAssistantAction(m.structured.nextAction.type)" class="ml-1 text-brand-600 underline">执行</button></div><button v-if="(m.structured.evidenceIds || []).length" @click="taskAssistantAction('view_missing_fields')" class="mt-1 text-brand-600 underline">查看判断依据 · {{ m.structured.evidenceIds.length }} 条</button><div v-if="(m.structured.limitations || []).length" class="mt-1 text-ink-500">当前限制：{{ m.structured.limitations.join('；') }}</div></div><div v-else :class="m.role === 'user' ? 'text-right' : ''"><span class="inline-block rounded px-3 py-2" :class="m.role === 'user' ? 'bg-brand-50' : 'bg-ink-50'">{{ m.text }}</span></div></template></div><div class="flex gap-2 mt-3"><input v-model="taskAssistantInput" @keyup.enter="askTaskAssistant(taskAssistantInput)" class="flex-1 border rounded px-3 py-2 text-[13px]" placeholder="围绕当前任务、证据与数据质量提问"><button @click="askTaskAssistant(taskAssistantInput)" class="bg-brand-500 text-white rounded px-4">发送</button></div><div class="mt-3 flex flex-wrap gap-2"><button v-for="q in ((selectedTask.assistantContext.suggestedQuestions || []).length ? selectedTask.assistantContext.suggestedQuestions : assistantQuestions)" :key="q" @click="askTaskAssistant(q)" class="text-[11px] text-brand-600 border rounded px-2 py-1">{{ q }}</button></div></div>
       </div><div v-else class="bg-white rounded-md p-8 text-center text-ink-500">未找到任务</div>
       </template>
       <template v-else-if="currentView === 'list'">
@@ -3304,7 +3382,6 @@ const app = createApp({
           <button @click="openDiagnosis(rtaList[0].rtaId, true)" title="打开数据不足状态示例" class="bg-white border border-amber-200 text-amber-700 px-3 py-1.5 rounded text-[13px] btn-tactile hover:bg-amber-50 font-medium">
             <span class="inline-flex items-center justify-center w-4 h-4 mr-1 rounded-full bg-amber-100 text-[11px]">!</span>预览数据不足
           </button>
-          <button disabled title="系统配置将在后续版本开放" class="bg-ink-50 border border-ink-200 text-ink-400 px-3 py-1.5 rounded text-[13px] cursor-not-allowed">系统配置（未开放）</button>
         </div>
       </div>
 
@@ -3455,7 +3532,7 @@ const app = createApp({
           <div class="text-[11.5px] text-ink-500 mt-1">当前为 Demo 工作台骨架，默认离线展示；不直接修改投放配置。</div>
         </div>
 
-        <section class="panel-surface bg-white rounded-md p-4 mb-4">
+        <section v-if="currentView === 'staff'" class="panel-surface bg-white rounded-md p-4 mb-4">
           <div class="flex items-center justify-between mb-3">
             <div class="text-[13px] font-semibold text-ink-800">当前诊断上下文</div>
             <span class="badge bg-ink-100 text-ink-600">模拟数据</span>
@@ -3470,11 +3547,16 @@ const app = createApp({
             <div><div class="text-ink-400">当前实验</div><div class="mt-1 text-ink-800">{{ assistantRta.experiment && assistantRta.experiment.name || '未关联实验' }}</div></div>
             <div><div class="text-ink-400">诊断时间范围</div><div class="mt-1 text-ink-800 num">2026-08-14 当日</div></div>
           </div>
-          <div class="grid grid-cols-3 gap-3 mt-3 text-[12px]">
+          <div class="grid grid-cols-4 gap-3 mt-3 text-[12px]">
             <div><span class="text-ink-400">项目：</span><span class="text-ink-800">{{ assistantRta.projectName }}</span></div>
             <div><span class="text-ink-400">策略：</span><span class="text-ink-800">{{ assistantRta.strategies && assistantRta.strategies[0] && assistantRta.strategies[0].name || '未选择策略' }}</span></div>
             <div><span class="text-ink-400">当前状态：</span><span class="text-ink-800">{{ assistantRta.status }}</span></div>
+            <div><span class="text-ink-400">主要影响指标：</span><span class="text-ink-800">{{ assistantPrimaryMetric(assistantRta) }}</span></div>
           </div>
+          <div class="mt-3 text-[11px] text-ink-400">数据更新时间：{{ (assistantRta && assistantRta.updatedAt) || '2026-08-14 当日' }}</div>
+          <div class="mt-3 grid grid-cols-3 gap-3 text-[12px]"><div><b>快速了解</b><button v-for="q in assistantQuestions.slice(0,2)" :key="q" @click="askRecommended(q)" class="block text-left text-brand-600 mt-2">{{ q }}</button></div><div><b>查看依据</b><button @click="askRecommended('这个判断依据是什么？')" class="block text-left text-brand-600 mt-2">这个判断依据是什么？</button></div><div><b>准备处理</b><button @click="askRecommended('建议怎么调整？')" class="block text-left text-brand-600 mt-2">建议怎么调整？</button></div></div>
+          <button class="text-[11px] text-ink-500 mt-3" @click="askRecommended('哪些原因已经排除？')">更多问题</button>
+          <div v-if="isAsking" class="mt-3 text-[12px] text-ink-500">✓ 已读取当前 RTA 数据 · ✓ 已完成规则检查 · → 正在整理判断依据</div>
         </section>
 
         <div class="grid grid-cols-5 gap-4">
@@ -3496,7 +3578,7 @@ const app = createApp({
                 <div v-else class="flex gap-2 items-start">
                   <div class="w-6 h-6 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-[11px] font-medium">参</div>
                   <div class="flex-1 max-w-[86%]">
-                    <div class="bg-white border border-ink-200 rounded px-3 py-2 text-[12.5px] text-ink-700 leading-relaxed whitespace-pre-wrap break-words">{{ msg.text }}</div>
+                    <div v-if="msg.structured" class="bg-white border border-ink-200 rounded px-3 py-2 text-[12.5px] text-ink-700 leading-relaxed"><div class="font-semibold text-ink-800">结论：{{ msg.structured.conclusion }}</div><div v-if="(msg.structured.keyMetrics || []).length" class="mt-2">关键指标：<span v-for="metric in msg.structured.keyMetrics" :key="metric.name" class="mr-2">{{ metric.name }}：{{ metric.value }}</span></div><div v-if="msg.structured.nextAction" class="mt-2">下一步：{{ msg.structured.nextAction.label }}</div><button v-if="(msg.structured.evidenceIds || []).length" @click="standaloneAssistantAction('view_missing_fields')" class="mt-2 text-brand-600 underline">查看判断依据 · {{ msg.structured.evidenceIds.length }} 条</button><div v-if="(msg.structured.limitations || []).length" class="mt-2 text-ink-500">当前限制：{{ msg.structured.limitations.join('；') }}</div></div><div v-else class="bg-white border border-ink-200 rounded px-3 py-2 text-[12.5px] text-ink-700 leading-relaxed break-words"><p v-for="(segment, segmentIndex) in assistantAnswerSegments(msg.text)" :key="segmentIndex" :class="segmentIndex === 0 ? 'font-semibold text-ink-800' : 'mt-1'">{{ segment }}</p></div>
                     <div v-if="msg.suggestions && msg.suggestions.length" class="mt-2 flex flex-wrap gap-1.5">
                       <button v-for="s in msg.suggestions" :key="s" @click="askRecommended(s)" :disabled="isAsking" class="text-[11.5px] text-brand-600 border border-brand-200 bg-white hover:bg-brand-50 disabled:opacity-50 disabled:cursor-not-allowed rounded px-2 py-1 btn-tactile">{{ s }}</button>
                     </div>
