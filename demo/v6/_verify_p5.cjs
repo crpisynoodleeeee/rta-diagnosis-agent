@@ -66,7 +66,7 @@ group(5, '工作台静态实现检查', [
   () => { ['诊断工作台','RTA 配置','智能参谋'].forEach(x=>assert(nav.includes(`label: '${x}'`), `导航缺少 ${x}`)); ['策略工厂','RTA 实验','监测链接','归因配置'].forEach(x=>assert(!nav.includes(x), `导航仍含 ${x}`)); },
   () => assert(html.includes("currentView === 'taskDetail'"), '缺 taskDetail 分支'),
   () => assert(/当前证据不足|数据不足/.test(html), '缺数据不足面板'),
-  () => assert(/既有演示能力|P5 不包含正式审批/.test(html), '缺既有演示能力声明'),
+  () => assert(/完整诊断报告|P5 不包含正式审批/.test(html), '缺完整诊断报告声明'),
   () => assert(/askTaskAssistant|taskChatSessions/.test(html), '缺任务内参谋'),
   () => assert(html.includes("currentView === 'list'") && /RTAID 配置|RTA 配置/.test(html), 'RTA 列表不可访问'),
   () => assert(html.includes('./data/diagnosis-task-model.js'), '缺模型脚本引入')
